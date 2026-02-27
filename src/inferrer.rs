@@ -1,7 +1,7 @@
 use anyhow::{Result, Context};
 use reqwest::Client;
 use serde_json::{json, Value};
-use crate::models::{RepoContext, AgentsManifest, Capability, Endpoint, Parameter};
+use crate::models::{RepoContext, AgentsManifest};
 
 const GEMINI_API_URL: &str = 
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
