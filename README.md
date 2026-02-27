@@ -4,7 +4,7 @@ Make any repository agent-ready. Instantly.
 
 Beacon scans a codebase, infers its agent-usable capabilities using Gemini 2.5 Flash, and generates a standards-compliant `AGENTS.md` file. It also validates existing `AGENTS.md` files and ships as a web API.
 
-Built on the [AGENTS.md standard](https://github.com/agentmd/agent.md) governed by the Agentic AI Foundation (Linux Foundation).
+Built on the [AGENTS.md standard](https://github.com/agentmd/agent.md)
 
 ---
 
