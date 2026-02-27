@@ -49,8 +49,13 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Generate { target, output } => {
-            println!("🔦 Scanning: {target}");
-            // pipeline: scanner → inferrer → generator
+            let ctx = scanner::scan_local(&target)?;
+            println!("📦 Repo: {}", ctx.name);
+            println!("   README: {}", ctx.readme.is_some());
+            println!("   Source files: {}", ctx.source_files.len());
+            println!("   OpenAPI: {}", ctx.openapi_spec.is_some());
+            // inferrer next
+            let _ = output; // will use soon
         }
         Commands::Validate { file, check_endpoints } => {
             println!("✅ Validating: {file}");
