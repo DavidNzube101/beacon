@@ -38,9 +38,15 @@ pub fn validate_content(content: &str) -> Result<ValidationResult> {
 
     // Endpoints section check
     if content.contains("## Endpoints") {
-        // Each endpoint should have a method
         let valid_methods = ["GET", "POST", "PUT", "DELETE", "PATCH"];
-        let endpoint_lines: Vec<&str> = content
+        
+        // Only look at lines AFTER ## Endpoints, not capabilities
+        let in_endpoints_section = content
+            .split("## Endpoints")
+            .nth(1)
+            .unwrap_or("");
+
+        let endpoint_lines: Vec<&str> = in_endpoints_section
             .lines()
             .filter(|l| l.starts_with("### `"))
             .collect();
