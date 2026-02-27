@@ -49,14 +49,18 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Generate { target, output } => {
+            println!("🔦 Beacon — scanning {}...", target);
+            
             let ctx = scanner::scan_local(&target)?;
-            println!("📦 Repo: {}", ctx.name);
-            println!("   README: {}", ctx.readme.is_some());
-            println!("   Source files: {}", ctx.source_files.len());
+            println!("📦 Repo: {} ({} source files)", ctx.name, ctx.source_files.len());
 
             let manifest = inferrer::infer_capabilities(&ctx).await?;
-            println!("✅ Got manifest: {}", manifest.name);
-            let _ = output;
+            
+            generator::generate_agents_md(&manifest, &output)?;
+            
+            println!("\n✅ Done! AGENTS.md written to: {}", output);
+            println!("   Capabilities: {}", manifest.capabilities.len());
+            println!("   Endpoints:    {}", manifest.endpoints.len());
         }
         Commands::Validate { file, check_endpoints } => {
             println!("✅ Validating: {file}");
