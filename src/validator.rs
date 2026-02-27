@@ -1,6 +1,6 @@
 use anyhow::Result;
 use reqwest::Client;
-use crate::models::{AgentsManifest, ValidationResult, EndpointCheckResult};
+use crate::models::{ValidationResult, EndpointCheckResult};
 
 pub fn validate_file(path: &str) -> Result<ValidationResult> {
     let content = std::fs::read_to_string(path)
