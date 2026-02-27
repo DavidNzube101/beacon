@@ -53,9 +53,10 @@ async fn main() -> anyhow::Result<()> {
             println!("📦 Repo: {}", ctx.name);
             println!("   README: {}", ctx.readme.is_some());
             println!("   Source files: {}", ctx.source_files.len());
-            println!("   OpenAPI: {}", ctx.openapi_spec.is_some());
-            // inferrer next
-            let _ = output; // will use soon
+
+            let manifest = inferrer::infer_capabilities(&ctx).await?;
+            println!("✅ Got manifest: {}", manifest.name);
+            let _ = output;
         }
         Commands::Validate { file, check_endpoints } => {
             println!("✅ Validating: {file}");
