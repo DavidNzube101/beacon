@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: beacon
+    runtime: docker
+    plan: free
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: RUST_LOG
+        value: info
+    healthCheckPath: /health
+    dockerfilePath: ./Dockerfile
+```
+
+---
+
+**`.dockerignore`** — create in project root:
+```
+target/
+.env
+.git/
+*.md
