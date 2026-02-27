@@ -113,11 +113,10 @@ async fn handle_generate(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Generate markdown
-    let mut agents_md_content = String::new();
     let tmp_path = format!("/tmp/beacon_{}.md", &ctx.name);
     generator::generate_agents_md(&manifest, &tmp_path)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    agents_md_content = std::fs::read_to_string(&tmp_path)
+    let agents_md_content = std::fs::read_to_string(&tmp_path)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let _ = std::fs::remove_file(&tmp_path);
 
