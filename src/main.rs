@@ -54,9 +54,8 @@ enum Commands {
 
 #[derive(Deserialize)]
 struct GenerateRequest {
-    repo_url: String,
-    #[serde(default = "default_output")]
-    output: String,
+    #[serde(flatten)]
+    repo_context: models::RepoContext,
     provider: Option<String>,
 }
 
@@ -137,7 +136,7 @@ async fn handle_generate(
             db::record_payment(rid, txn, ch, None).await.ok();
             actual_provider = "gemini".to_string();
         } else {
-            let rid = db::create_run(&req.repo_url).await
+            let rid = db::create_run(&req.repo_context.name).await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
             let amount = std::env::var("PAYMENT_AMOUNT_USDC").unwrap_or_else(|_| "0.09".to_string());
@@ -160,13 +159,10 @@ async fn handle_generate(
         }
     }
 
-    let ctx = scanner::scan_local(&req.repo_url)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-
-    let manifest = inferrer::infer_capabilities(&ctx, &actual_provider, None).await
+    let manifest = inferrer::infer_capabilities(&req.repo_context, &actual_provider, None).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let tmp_path = format!("/tmp/beacon_{}.md", &ctx.name);
+    let tmp_path = format!("/tmp/beacon_{}.md", &req.repo_context.name);
     generator::generate_agents_md(&manifest, &tmp_path)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let content = std::fs::read_to_string(&tmp_path)

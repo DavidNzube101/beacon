@@ -148,11 +148,85 @@ async fn call_openai(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
 
 
 
-async fn call_beacon_cloud(_ctx: &RepoContext, _prompt: &str) -> Result<AgentsManifest> {
-    // todo - x402 payme
-    anyhow::bail!(
-        "beacon-ai-cloud is coming soon. Use --provider gemini/claude/openai with your own key for now."
-    )
+const BEACON_CLOUD_URL: &str = "http://localhost:8080";
+
+async fn call_beacon_cloud(ctx: &RepoContext, _prompt: &str) -> Result<AgentsManifest> {
+    let client = Client::new();
+    let beacon_url = std::env::var("BEACON_CLOUD_URL")
+        .unwrap_or_else(|_| BEACON_CLOUD_URL.to_string());
+    let generate_url = format!("{}/generate", beacon_url);
+
+    println!("   ⚡️ Contacting Beacon Cloud...");
+
+    let initial_res = client
+        .post(&generate_url)
+        .json(ctx)
+        .send()
+        .await
+        .context("Failed to connect to Beacon Cloud API")?;
+
+    if initial_res.status() != reqwest::StatusCode::PAYMENT_REQUIRED {
+        let error_text = initial_res.text().await?;
+        anyhow::bail!(
+            "Unexpected response from Beacon Cloud. Expected HTTP 402, got status {}. Error: {}",
+            initial_res.status(),
+            error_text
+        );
+    }
+
+    println!("   💰 Payment required to proceed.");
+
+    let headers = initial_res.headers();
+    let amount = headers.get("x-payment-amount").and_then(|v| v.to_str().ok()).unwrap_or("N/A");
+    let run_id = headers.get("x-payment-run-id").and_then(|v| v.to_str().ok()).context("Missing run ID from server")?;
+    let base_addr = headers.get("x-payment-address-base").and_then(|v| v.to_str().ok()).unwrap_or("N/A");
+    let sol_addr = headers.get("x-payment-address-solana").and_then(|v| v.to_str().ok()).unwrap_or("N/A");
+
+    println!("\n--------------------------------------------------");
+    println!("Please send {} USDC to one of these addresses:", amount);
+    println!("  - Base:   {}", base_addr);
+    println!("  - Solana: {}", sol_addr);
+    println!("--------------------------------------------------\n");
+
+    let mut chain = String::new();
+    println!("Which chain did you pay on? (base/solana)");
+    std::io::stdin().read_line(&mut chain).context("Failed to read chain")?;
+    let chain = chain.trim().to_lowercase();
+    if chain != "base" && chain != "solana" {
+        anyhow::bail!("Invalid chain specified. Please use 'base' or 'solana'.");
+    }
+
+    let mut txn_hash = String::new();
+    println!("Please paste the transaction hash:");
+    std::io::stdin().read_line(&mut txn_hash).context("Failed to read transaction hash")?;
+    let txn_hash = txn_hash.trim();
+
+    println!("   🔍 Verifying payment...");
+
+    let final_res = client
+        .post(&generate_url)
+        .header("x-payment-run-id", run_id)
+        .header("x-payment-chain", &chain)
+        .header("x-payment-txn-hash", txn_hash)
+        .json(ctx)
+        .send()
+        .await
+        .context("Failed to send final request to Beacon Cloud")?;
+
+    if !final_res.status().is_success() {
+        let error_text = final_res.text().await.unwrap_or_else(|_| "Could not read error body".to_string());
+        anyhow::bail!(
+            "Beacon Cloud returned an error after payment. Status: {}. Error: {}",
+            final_res.status(),
+            error_text,
+        );
+    }
+
+    let raw: Value = final_res.json().await.context("Failed to parse final response from Beacon Cloud")?;
+    
+    let agents_md_content = raw["agents_md"].as_str().context("Missing 'agents_md' field in final response")?;
+
+    parse_manifest(agents_md_content)
 }
 
 /// resolving API key here, flow would be cli flag > env > error
