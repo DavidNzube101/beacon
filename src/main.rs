@@ -269,19 +269,11 @@ async fn main() -> anyhow::Result<()> {
             let governor_conf = Box::new(
                 GovernorConfigBuilder::default()
                     .key_extractor(SmartIpKeyExtractor)
-                    .period(Duration::from_secs(60))
-                    .burst_size(10)
                     .use_headers()
                     .finish()
                     .unwrap(),
             );
             
-            let governor_limiter = RateLimiter::new(
-                Quota::per_minute(NonZeroU32::new(10).unwrap()),
-                DefaultKeyedStateStore::new(Default::default()),
-                &DefaultClock::default(),
-            );
-
             let app = Router::new()
                 .route("/health", get(health))
                 .route("/generate", post(handle_generate))
@@ -294,10 +286,7 @@ async fn main() -> anyhow::Result<()> {
                                 format!("Unhandled internal error: {}", e),
                             )
                         }))
-                        .layer(GovernorLayer {
-                            config: Box::leak(governor_conf),
-                            store: redis_conn_manager,
-                        }),
+                        .layer(GovernorLayer::new_with_conn(governor_conf, redis_conn_manager)),
                 );
 
             let addr = SocketAddr::from(([0, 0, 0, 0], port));
