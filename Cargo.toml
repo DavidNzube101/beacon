@@ -21,3 +21,6 @@ dotenvy = "0.15"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 walkdir = "2"
+postgrest = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
