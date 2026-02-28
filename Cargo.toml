@@ -24,3 +24,6 @@ walkdir = "2"
 postgrest = "1"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
+ethers = { version = "2.0", features = ["rustls"] }
+solana-client = "1.17"
+solana-sdk = "1.17"
