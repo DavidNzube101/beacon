@@ -202,3 +202,55 @@ mod db_tests {
         assert!(result.is_ok());
     }
 }
+
+#[cfg(test)]
+mod api_tests {
+    use crate::{AppState, rate_limit_middleware};
+    use axum::{routing::get, Router, middleware, http::{HeaderName, HeaderValue}};
+    use axum_test::TestServer;
+    use std::sync::Arc;
+
+    async fn mock_handler() -> &'static str {
+        "ok"
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_rate_limiter_enforces_limit() {
+        dotenvy::dotenv().ok();
+        let redis_url = match std::env::var("REDIS_URL") {
+            Ok(url) => url,
+            Err(_) => return,
+        };
+
+        let state = AppState {
+            redis_client: Arc::new(redis::Client::open(redis_url).unwrap()),
+        };
+
+        let app = Router::new()
+            .route("/generate", get(mock_handler))
+            .layer(middleware::from_fn_with_state(state.clone(), rate_limit_middleware))
+            .with_state(state);
+
+        let server = TestServer::new(app).unwrap();
+
+        let header_name = HeaderName::from_static("x-forwarded-for");
+        let header_value = HeaderValue::from_static("1.2.3.4");
+
+
+
+        for _ in 0..20 {
+            let response = server.get("/generate")
+                .add_header(header_name.clone(), header_value.clone())
+                .await;
+            assert_ne!(response.status_code(), 429);
+        }
+
+        
+        
+        let response = server.get("/generate")
+            .add_header(header_name, header_value)
+            .await;
+        assert_eq!(response.status_code(), 429);
+    }
+}
