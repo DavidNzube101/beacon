@@ -7,7 +7,7 @@ mod validator;
 mod models;
 
 mod tests;
-
+mod db;
 use clap::{Parser, Subcommand};
 use axum::{
     routing::post,

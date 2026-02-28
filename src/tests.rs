@@ -147,3 +147,58 @@ mod tests {
         assert!(result.warnings.iter().any(|w| w.contains("description")));
     }
 }
+
+#[cfg(test)]
+mod db_tests {
+    use crate::db;
+
+    #[tokio::test]
+    async fn test_payment_already_used_returns_false_for_unknown_hash() {
+        dotenvy::dotenv().ok();
+        if std::env::var("SUPABASE_URL").is_err() {
+            return;
+        }
+        let result = db::payment_already_used("nonexistent_hash_xyz_123").await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_create_run_returns_uuid() {
+        dotenvy::dotenv().ok();
+        if std::env::var("SUPABASE_URL").is_err() {
+            return;
+        }
+        let result = db::create_run("test-repo").await;
+        assert!(result.is_ok());
+        let id = result.unwrap();
+        assert!(!id.is_empty());
+        assert_eq!(id.len(), 36);
+    }
+
+    #[tokio::test]
+    async fn test_full_run_lifecycle() {
+        dotenvy::dotenv().ok();
+        if std::env::var("SUPABASE_URL").is_err() {
+            return;
+        }
+        let run_id = db::create_run("test-lifecycle-repo").await.unwrap();
+        
+        let paid = db::mark_run_paid(&run_id, "0xtest_txn_hash_123", "base").await;
+        assert!(paid.is_ok());
+
+        let complete = db::mark_run_complete(&run_id, "# AGENTS.md\n\n> test").await;
+        assert!(complete.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mark_run_failed() {
+        dotenvy::dotenv().ok();
+        if std::env::var("SUPABASE_URL").is_err() {
+            return;
+        }
+        let run_id = db::create_run("test-fail-repo").await.unwrap();
+        let result = db::mark_run_failed(&run_id, "inference failed").await;
+        assert!(result.is_ok());
+    }
+}
