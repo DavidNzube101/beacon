@@ -54,17 +54,20 @@ get_target() {
 
 # --- Smart Conflict Detection ---
 is_our_binary() {
-    path="$1"
-    if [ ! -x "$path" ]; then return 1; fi
-    # Run the binary and check for our unique signature in help output
-    "$path" --help 2>&1 | grep -q "Make any repo agent-ready"
+    bin_path="$1"
+    if [ ! -x "$bin_path" ]; then return 1; fi
+    # Check if the help output contains our signature string
+    if "$bin_path" --help 2>&1 | grep "agent-ready" > /dev/null; then
+        return 0
+    fi
+    return 1
 }
 
 if [ -e "$INSTALL_DIR/$BINARY" ]; then
     if is_our_binary "$INSTALL_DIR/$BINARY"; then
-        echo "Updating existing Beacon installation at $INSTALL_DIR/$BINARY..."
+        echo "Existing Beacon installation detected. Proceeding with upgrade..."
     else
-        echo "Error: A file named '$BINARY' already exists in $INSTALL_DIR and it doesn't appear to be Beacon."
+        echo "Error: A file named '$BINARY' already exists in $INSTALL_DIR and does not appear to be Beacon."
         echo "To install Beacon with a different name, pass it as an argument:"
         echo "  curl -fsSL https://raw.githubusercontent.com/DavidNzube101/beacon/master/install.sh | sh -s -- your-custom-name"
         exit 1
