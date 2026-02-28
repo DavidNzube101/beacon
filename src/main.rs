@@ -6,6 +6,8 @@ mod generator;
 mod validator;
 mod models;
 
+mod tests;
+
 use clap::{Parser, Subcommand};
 use axum::{
     routing::post,
