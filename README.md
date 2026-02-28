@@ -92,6 +92,6 @@ POST /validate   { "content": "<agents_md_string>" }
 
 ## How it works
 
-1. **Scan** — walks the repo, extracts README, source files, package manifests, and OpenAPI specs
-2. **Infer** — sends the context to your chosen AI provider, which identifies capabilities, endpoints, and schemas
-3. **Generate** — writes an AAIF-compliant `AGENTS.md` to your repo
+1. **Scan**: walks the repo, extracts README, source files, package manifests, and OpenAPI specs
+2. **Infer**: sends the context to your chosen AI provider, which identifies capabilities, endpoints, and schemas
+3. **Generate**: writes an AAIF-compliant `AGENTS.md` to your repo
