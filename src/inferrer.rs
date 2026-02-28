@@ -166,10 +166,11 @@ async fn call_beacon_cloud(ctx: &RepoContext, _prompt: &str) -> Result<AgentsMan
         .context("Failed to connect to Beacon Cloud API")?;
 
     if initial_res.status() != reqwest::StatusCode::PAYMENT_REQUIRED {
+        let status = initial_res.status();
         let error_text = initial_res.text().await?;
         anyhow::bail!(
             "Unexpected response from Beacon Cloud. Expected HTTP 402, got status {}. Error: {}",
-            initial_res.status(),
+            status,
             error_text
         );
     }
@@ -214,10 +215,11 @@ async fn call_beacon_cloud(ctx: &RepoContext, _prompt: &str) -> Result<AgentsMan
         .context("Failed to send final request to Beacon Cloud")?;
 
     if !final_res.status().is_success() {
+        let status = final_res.status();
         let error_text = final_res.text().await.unwrap_or_else(|_| "Could not read error body".to_string());
         anyhow::bail!(
             "Beacon Cloud returned an error after payment. Status: {}. Error: {}",
-            final_res.status(),
+            status,
             error_text,
         );
     }
