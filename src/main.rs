@@ -103,7 +103,7 @@ async fn handle_generate(
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
 
-        let manifest = inferrer::infer_capabilities(&ctx)
+        let manifest = inferrer::infer_capabilities(&ctx, "gemini", None)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 

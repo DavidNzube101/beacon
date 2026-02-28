@@ -133,7 +133,7 @@ fn should_skip(path: &Path) -> bool {
 }
 
 fn is_source_file(ext: &str) -> bool {
-    matches!(ext, "rs" | "py" | "ts" | "js" | "ts" | "tsx" | "jsx" | "go" | "java" | "cpp" | "c" | "h")
+    matches!(ext, "rs" | "py" | "ts" | "js" | "tsx" | "jsx" | "go" | "java" | "cpp" | "c" | "h")
 }
 
 fn is_openapi(path: &Path) -> bool {
