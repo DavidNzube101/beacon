@@ -13,7 +13,7 @@ mod db;
 use anyhow::Context;
 use axum::{
     extract::{ConnectInfo, State},
-    http::{HeaderMap, Method, Request, StatusCode},
+    http::{HeaderMap, Request, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -26,7 +26,8 @@ use std::{net::SocketAddr, sync::Arc, time::SystemTime};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-type RedisPool = Arc<redis::Client>;
+// Type alias for our Redis Client
+type RedisClient = Arc<redis::Client>;
 
 // Rate Limiting Constants
 const RATE_LIMIT_WINDOW_SECONDS: u64 = 60;
@@ -106,26 +107,29 @@ async fn health() -> Json<HealthResponse> {
     })
 }
 
-async fn rate_limit_middleware<B>(
-    State(redis_pool): State<RedisPool>,
+async fn rate_limit_middleware(
+    State(redis_client): State<RedisClient>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    request: Request<B>,
-    next: Next<B>,
+    request: Request<axum::body::Body>,
+    next: Next,
 ) -> Result<Response, StatusCode> {
     let key = addr.ip().to_string();
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    
-    let mut conn = redis_pool.get_async_connection().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut conn = redis_client
+        .get_async_connection()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let (count, _): (usize, ()) = redis::pipe()
         .atomic()
         .zrembyscore(&key, 0, now - RATE_LIMIT_WINDOW_SECONDS)
         .zadd(&key, now, now)
         .zcard(&key)
-        .expire(&key, RATE_LIMIT_WINDOW_SECONDS as usize)
+        .expire(&key, RATE_LIMIT_WINDOW_SECONDS as i64)
         .query_async(&mut conn)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
