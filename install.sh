@@ -20,18 +20,18 @@ get_target() {
             case "$ARCH" in
                 x86_64)  echo "beacon-linux-x86_64" ;;
                 aarch64) echo "beacon-linux-arm64" ;;
-                *)       echo "oops! unsupported architecture: $ARCH" && exit 1 ;;
+                *)       echo "Unsupported architecture: $ARCH" >&2 && exit 1 ;;
             esac
             ;;
         Darwin)
             case "$ARCH" in
                 x86_64) echo "beacon-macos-x86_64" ;;
                 arm64)  echo "beacon-macos-arm64" ;;
-                *)      echo "oops! unsupported architecture: $ARCH" && exit 1 ;;
+                *)      echo "Unsupported architecture: $ARCH" >&2 && exit 1 ;;
             esac
             ;;
         *)
-            echo "Unsupported OS: $OS"
+            echo "Unsupported OS: $OS" >&2
             exit 1
             ;;
     esac
@@ -47,11 +47,54 @@ echo "Downloading $TARGET..."
 curl -fsSL "$URL" -o "/tmp/$BINARY"
 chmod +x "/tmp/$BINARY"
 
-if [ -w "$INSTALL_DIR" ]; then
-    mv "/tmp/$BINARY" "$INSTALL_DIR/$BINARY"
-else
-    sudo mv "/tmp/$BINARY" "$INSTALL_DIR/$BINARY"
-fi
+# --- New logic starts here ---
 
-echo "Beacon installed to $INSTALL_DIR/$BINARY"
-echo "Run: beacon --help"
+# Function to perform the move, using sudo if needed
+move_binary() {
+    local src="$1"
+    local dest="$2"
+    local dest_binary_name=$(basename "$dest")
+    if [ -w "$(dirname "$dest")" ]; then
+        mv "$src" "$dest"
+    else
+        echo "Sudo privileges are required to install to $INSTALL_DIR"
+        sudo mv "$src" "$dest"
+    fi
+    echo "Beacon installed to $dest"
+    echo "Run: $dest_binary_name --help"
+}
+
+# Check if the binary already exists
+if [ -e "$INSTALL_DIR/$BINARY" ]; then
+    echo "A file named '$BINARY' already exists in $INSTALL_DIR."
+    printf "What would you like to do? [(o)verwrite, (r)ename, (c)ancel]: "
+    read -r choice
+    
+    case "$choice" in
+        o|O)
+            echo "Overwriting existing binary..."
+            move_binary "/tmp/$BINARY" "$INSTALL_DIR/$BINARY"
+            ;;
+        r|R)
+            printf "Enter a new name for the binary: "
+            read -r new_name
+            if [ -z "$new_name" ]; then
+                echo "No name entered. Aborting." >&2
+                exit 1
+            fi
+            if [ -e "$INSTALL_DIR/$new_name" ]; then
+                echo "File '$new_name' also exists. Aborting." >&2
+                exit 1
+            fi
+            echo "Installing with new name: $new_name"
+            move_binary "/tmp/$BINARY" "$INSTALL_DIR/$new_name"
+            ;;
+        *)
+            echo "Installation cancelled."
+            exit 0
+            ;;
+    esac
+else
+    # No conflict, proceed with standard installation
+    move_binary "/tmp/$BINARY" "$INSTALL_DIR/$BINARY"
+fi
