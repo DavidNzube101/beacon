@@ -1,6 +1,6 @@
 # AGENTS.md — beacon
 
-> This project, Beacon, is a tool designed to make any software repository agent-ready. It can scan local repositories or GitHub URLs, infer agent-usable capabilities using an AI model (Gemini), generate a structured AGENTS.md file describing these capabilities, and validate existing AGENTS.md files. It also provides a web API server to expose these functionalities programmatically.
+> Beacon is a tool that makes any software repository agent-ready. It scans a codebase, infers agent-usable capabilities using AI (Gemini 2.5 Flash), and generates a standards-compliant AGENTS.md file. It also validates existing AGENTS.md files and provides a web API for these functionalities, allowing AI agents to programmatically discover and describe repository capabilities.
 
 **Version:** 0.1.0
 
@@ -10,7 +10,7 @@
 
 **Type:** `none`
 
-No explicit authentication is required for the Beacon API server itself. Note that the internal inference process relies on a 'GEMINI_API_KEY' environment variable for accessing the Gemini AI model.
+The Beacon API endpoints themselves do not require client authentication. However, the Beacon server requires a `GEMINI_API_KEY` environment variable to be set for its internal AI inference capabilities to function.
 
 ---
 
@@ -18,27 +18,22 @@ No explicit authentication is required for the Beacon API server itself. Note th
 
 What an agent can do with this repository:
 
-### `generate_agents_file`
+### `generate_agents_md`
 
-Scans a target repository (local path or GitHub URL), infers its agent-usable capabilities using an AI model, and generates an AGENTS.md file describing these capabilities.
+Generate an AGENTS.md file for a given local repository path by scanning its codebase and inferring agent-usable capabilities, endpoints, and schemas using an AI model.
 
 **Input:**
 
 ```json
 {
   "properties": {
-    "output": {
-      "default": "AGENTS.md",
-      "description": "Output file path",
-      "type": "string"
-    },
-    "target": {
-      "description": "Path to local repo or GitHub URL (e.g. https://github.com/user/repo)",
+    "repo_url": {
+      "description": "The local file path to the repository to be analyzed. This path must be accessible by the Beacon server.",
       "type": "string"
     }
   },
   "required": [
-    "target"
+    "repo_url"
   ],
   "type": "object"
 }
@@ -49,41 +44,58 @@ Scans a target repository (local path or GitHub URL), infers its agent-usable ca
 ```json
 {
   "properties": {
-    "output_file": {
-      "description": "Path to the generated AGENTS.md file",
+    "agents_md": {
+      "description": "The content of the generated AGENTS.md file.",
       "type": "string"
+    },
+    "capabilities": {
+      "description": "The number of capabilities inferred and included in the AGENTS.md.",
+      "type": "integer"
+    },
+    "endpoints": {
+      "description": "The number of endpoints inferred and included in the AGENTS.md.",
+      "type": "integer"
+    },
+    "repo_name": {
+      "description": "The name of the repository that was analyzed.",
+      "type": "string"
+    },
+    "success": {
+      "description": "Indicates if the AGENTS.md generation was successful.",
+      "type": "boolean"
     }
   },
+  "required": [
+    "success",
+    "agents_md",
+    "capabilities",
+    "endpoints",
+    "repo_name"
+  ],
   "type": "object"
 }
 ```
 
 **Examples:**
 
-- beacon generate --target https://github.com/user/repo --output AGENTS.md
-- beacon generate --target /path/to/local/repo
+- curl -X POST -H "Content-Type: application/json" -d '{"repo_url": "/path/to/my-local-project"}' http://localhost:8080/generate
 
-### `validate_agents_file`
+### `validate_agents_md`
 
-Validates the structure and content of an existing AGENTS.md file, with an option to check the reachability of declared endpoints.
+Validate the content of an AGENTS.md file against the AGENTS.md standard, checking for required sections and formatting.
 
 **Input:**
 
 ```json
 {
   "properties": {
-    "check_endpoints": {
-      "default": false,
-      "description": "Also test if declared endpoints are reachable",
-      "type": "boolean"
-    },
-    "file": {
-      "description": "Path to AGENTS.md",
+    "content": {
+      "description": "The full content of the AGENTS.md file as a string to be validated.",
       "type": "string"
     }
   },
   "required": [
-    "file"
+    "content"
   ],
   "type": "object"
 }
@@ -94,88 +106,62 @@ Validates the structure and content of an existing AGENTS.md file, with an optio
 ```json
 {
   "properties": {
-    "details": {
-      "description": "Validation results or error messages.",
-      "type": "string"
+    "errors": {
+      "description": "A list of validation errors found in the AGENTS.md content.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     },
-    "is_valid": {
-      "description": "True if the AGENTS.md file is valid, false otherwise.",
+    "valid": {
+      "description": "True if the AGENTS.md content is valid, false otherwise.",
       "type": "boolean"
-    }
-  },
-  "type": "object"
-}
-```
-
-**Examples:**
-
-- beacon validate --file AGENTS.md
-- beacon validate --file AGENTS.md --check-endpoints
-
-### `start_api_server`
-
-Starts the Beacon web API server, making its functionalities available via HTTP endpoints.
-
-**Input:**
-
-```json
-{
-  "properties": {
-    "port": {
-      "default": 8080,
-      "description": "Port to listen on",
-      "type": "integer"
-    }
-  },
-  "required": [],
-  "type": "object"
-}
-```
-
-**Output:**
-
-```json
-{
-  "properties": {
-    "port": {
-      "description": "The port the server is listening on",
-      "type": "integer"
     },
-    "status": {
-      "description": "Server status (e.g., 'running')",
-      "type": "string"
+    "warnings": {
+      "description": "A list of validation warnings found in the AGENTS.md content.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     }
   },
+  "required": [
+    "valid",
+    "errors",
+    "warnings"
+  ],
   "type": "object"
 }
 ```
 
 **Examples:**
 
-- beacon serve --port 8080
+- curl -X POST -H "Content-Type: application/json" -d '{"content": "# AGENTS.md\n> My project description.\n## Capabilities\n### `my_function`\nDoes something."}' http://localhost:8080/validate
 
 ---
 
 ## Endpoints
 
+### `GET /health`
+
+Checks the health and availability of the Beacon API server.
+
 ### `POST /generate`
 
-Triggers the generation of an AGENTS.md file for a specified repository.
+Initiates the generation of an AGENTS.md file for a specified local repository path.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `target` | `string` | ✅ | Path to local repo or GitHub URL (e.g. https://github.com/user/repo) |
-| `output` | `string` | ❌ | Output file path (defaults to AGENTS.md) |
+| `repo_url` | `string` | ✅ | The local file path to the repository to be analyzed. This path must be accessible by the Beacon server. |
 
 ### `POST /validate`
 
-Validates an AGENTS.md file.
+Validates the provided content of an AGENTS.md file against the AGENTS.md standard.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `file_content` | `string` | ✅ | The content of the AGENTS.md file to validate. |
-| `check_endpoints` | `boolean` | ❌ | Whether to also test if declared endpoints are reachable. |
+| `content` | `string` | ✅ | The full content of the AGENTS.md file as a string to be validated. |
 
 ---
 
-*Generated by [Beacon](https://github.com/your-org/beacon) — Make any repo agent-ready. Instantly.*
+*Generated by [Beacon](https://github.com/DavidNzube101/beacon) — Make any repo agent-ready. Instantly.*
