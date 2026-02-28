@@ -7,7 +7,9 @@ pub struct AgentsManifest {
     pub name: String,
     pub description: String,
     pub version: Option<String>,
+    #[serde(default)]
     pub capabilities: Vec<Capability>,
+    #[serde(default)]
     pub endpoints: Vec<Endpoint>,
     pub authentication: Option<Authentication>,
     pub rate_limits: Option<RateLimits>,
@@ -20,6 +22,7 @@ pub struct Capability {
     pub description: String,
     pub input_schema: Option<serde_json::Value>,
     pub output_schema: Option<serde_json::Value>,
+    #[serde(default)]
     pub examples: Vec<String>,
 }
 
@@ -28,6 +31,7 @@ pub struct Endpoint {
     pub path: String,
     pub method: String,
     pub description: String,
+    #[serde(default)]
     pub parameters: Vec<Parameter>,
 }
 
