@@ -5,6 +5,7 @@ mod inferrer;
 mod generator;
 mod validator;
 mod models;
+mod verifier;
 
 mod tests;
 mod db;
@@ -14,7 +15,8 @@ use axum::{
     routing::get,
     Router,
     Json,
-    http::StatusCode,
+    http::{StatusCode, HeaderMap},
+    response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -40,7 +42,6 @@ enum Commands {
         api_key: Option<String>,
     },
     Validate {
-        /// path
         file: String,
         #[arg(long)]
         check_endpoints: bool,
@@ -56,6 +57,7 @@ struct GenerateRequest {
     repo_url: String,
     #[serde(default = "default_output")]
     output: String,
+    provider: Option<String>,
 }
 
 fn default_output() -> String {
@@ -99,30 +101,91 @@ async fn health() -> Json<HealthResponse> {
 }
 
 async fn handle_generate(
+    headers: HeaderMap,
     Json(req): Json<GenerateRequest>,
-) -> Result<Json<GenerateResponse>, (StatusCode, String)> {
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let provider = req.provider.clone().unwrap_or_else(|| "gemini".to_string());
+    let mut actual_provider = provider.clone();
+    let mut rid_final = None;
+
+    if provider == "beacon-ai-cloud" {
+        let txn_hash = headers.get("x-payment-txn-hash").and_then(|h| h.to_str().ok());
+        let chain = headers.get("x-payment-chain").and_then(|h| h.to_str().ok());
+        let run_id = headers.get("x-payment-run-id").and_then(|h| h.to_str().ok());
+
+        if let (Some(txn), Some(ch), Some(rid)) = (txn_hash, chain, run_id) {
+            rid_final = Some(rid.to_string());
+            if db::payment_already_used(txn).await.unwrap_or(false) {
+                return Err((StatusCode::CONFLICT, "Transaction hash already used".to_string()));
+            }
+
+            let amount = std::env::var("PAYMENT_AMOUNT_USDC").unwrap_or_else(|_| "0.09".to_string()).parse::<f64>().unwrap_or(0.09);
+            let wallet = if ch == "base" {
+                std::env::var("BEACON_WALLET_BASE").unwrap_or_default()
+            } else {
+                std::env::var("BEACON_WALLET_SOLANA").unwrap_or_default()
+            };
+
+            let verified = verifier::verify_payment(ch, txn, amount, &wallet).await
+                .map_err(|e| (StatusCode::BAD_REQUEST, format!("Verification failed: {}", e)))?;
+
+            if !verified {
+                return Err((StatusCode::PAYMENT_REQUIRED, "Payment not verified".to_string()));
+            }
+
+            db::mark_run_paid(rid, txn, ch).await.ok();
+            db::record_payment(rid, txn, ch, None).await.ok();
+            actual_provider = "gemini".to_string();
+        } else {
+            let rid = db::create_run(&req.repo_url).await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            let amount = std::env::var("PAYMENT_AMOUNT_USDC").unwrap_or_else(|_| "0.09".to_string());
+            let w_base = std::env::var("BEACON_WALLET_BASE").unwrap_or_default();
+            let w_sol = std::env::var("BEACON_WALLET_SOLANA").unwrap_or_default();
+
+            return Ok((
+                StatusCode::PAYMENT_REQUIRED,
+                [
+                    ("x-payment-amount", amount),
+                    ("x-payment-currency", "USDC".to_string()),
+                    ("x-payment-chain-base", "base".to_string()),
+                    ("x-payment-address-base", w_base),
+                    ("x-payment-chain-solana", "solana".to_string()),
+                    ("x-payment-address-solana", w_sol),
+                    ("x-payment-run-id", rid),
+                ],
+                "Payment required",
+            ).into_response());
+        }
+    }
+
     let ctx = scanner::scan_local(&req.repo_url)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
-
-        let manifest = inferrer::infer_capabilities(&ctx, "gemini", None)
-        .await
+    let manifest = inferrer::infer_capabilities(&ctx, &actual_provider, None).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let tmp_path = format!("/tmp/beacon_{}.md", &ctx.name);
     generator::generate_agents_md(&manifest, &tmp_path)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let agents_md_content = std::fs::read_to_string(&tmp_path)
+    let content = std::fs::read_to_string(&tmp_path)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let _ = std::fs::remove_file(&tmp_path);
+
+    if provider == "beacon-ai-cloud" {
+        if let Some(rid) = rid_final {
+            db::mark_run_complete(&rid, &content).await.ok();
+        }
+    }
 
     Ok(Json(GenerateResponse {
         success: true,
         capabilities: manifest.capabilities.len(),
         endpoints: manifest.endpoints.len(),
         repo_name: manifest.name.clone(),
-        agents_md: agents_md_content,
-    }))
+        agents_md: content,
+    }).into_response())
 }
 
 async fn handle_validate(
@@ -138,7 +201,6 @@ async fn handle_validate(
     }))
 }
 
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
@@ -147,41 +209,30 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-
         Commands::Generate { target, output, provider, api_key } => {
             println!("🔦 Beacon — scanning {}...", target);
-
             let ctx = scanner::scan_local(&target)?;
             println!("📦 Repo: {} ({} source files)", ctx.name, ctx.source_files.len());
-
             let manifest = inferrer::infer_capabilities(&ctx, &provider, api_key.as_deref()).await?;
-
             generator::generate_agents_md(&manifest, &output)?;
-
             println!("\n✅ Done! AGENTS.md written to: {}", output);
             println!("   Provider:     {}", provider);
             println!("   Capabilities: {}", manifest.capabilities.len());
             println!("   Endpoints:    {}", manifest.endpoints.len());
         }
-
         Commands::Validate { file, check_endpoints } => {
             println!("🔦 Beacon — validating {}...", file);
-
             let content = std::fs::read_to_string(&file)
                 .map_err(|_| anyhow::anyhow!("File not found: {}", file))?;
-
             let mut result = validator::validate_content(&content)?;
-
             if check_endpoints {
                 println!("   🌐 Checking endpoint reachability...");
                 result.endpoint_results = validator::check_endpoints(&content).await?;
             }
-
             println!("\n📋 Validation Report");
             println!("   Valid:    {}", if result.valid { "✅ Yes" } else { "❌ No" });
             println!("   Errors:   {}", result.errors.len());
             println!("   Warnings: {}", result.warnings.len());
-
             if !result.errors.is_empty() {
                 println!("\n❌ Errors:");
                 for e in &result.errors { println!("   • {}", e); }
@@ -202,24 +253,20 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-
         Commands::Serve { port } => {
             let app = Router::new()
                 .route("/health", get(health))
                 .route("/generate", post(handle_generate))
                 .route("/validate", post(handle_validate));
-
             let addr = SocketAddr::from(([0, 0, 0, 0], port));
             println!("🔦 Beacon API");
             println!("   http://0.0.0.0:{}", port);
             println!("   POST /generate  — generate AGENTS.md from a repo path");
             println!("   POST /validate  — validate an AGENTS.md file");
             println!("   GET  /health    — health check");
-
             let listener = tokio::net::TcpListener::bind(addr).await?;
-            axum::serve(listener, app).await?;
+            ax_server::serve(listener, app).await?;
         }
     }
-
     Ok(())
 }
