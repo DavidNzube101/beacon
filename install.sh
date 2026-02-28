@@ -2,8 +2,10 @@
 set -e
 
 REPO="DavidNzube101/beacon"
-BINARY="beacon"
 INSTALL_DIR="/usr/local/bin"
+
+# Get binary name from the first argument, default to "beacon"
+BINARY="${1:-beacon}"
 
 get_latest_version() {
     curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
@@ -37,63 +39,33 @@ get_target() {
     esac
 }
 
+# Check if the binary already exists before doing any work
+if [ -e "$INSTALL_DIR/$BINARY" ]; then
+    echo "Error: A file named '$BINARY' already exists in $INSTALL_DIR."
+    echo "To install Beacon with a different name, pass it as an argument:"
+    echo "  curl -fsSL https://raw.githubusercontent.com/DavidNzube101/beacon/master/install.sh | sh -s -- your-custom-name"
+    echo ""
+    echo "If you want to update the existing installation, please remove the old file first."
+    exit 1
+fi
+
 VERSION=$(get_latest_version)
 TARGET=$(get_target)
 URL="https://github.com/$REPO/releases/download/$VERSION/$TARGET"
 
-echo "Installing Beacon $VERSION..."
+echo "Installing Beacon $VERSION as '$BINARY'..."
 echo "Downloading $TARGET..."
 
-curl -fsSL "$URL" -o "/tmp/$BINARY"
-chmod +x "/tmp/$BINARY"
+TMP_BIN="/tmp/beacon_$(date +%s)"
+curl -fsSL "$URL" -o "$TMP_BIN"
+chmod +x "$TMP_BIN"
 
-# Function to perform the move, using sudo if needed
-move_binary() {
-    local src="$1"
-    local dest="$2"
-    local dest_binary_name=$(basename "$dest")
-    if [ -w "$(dirname "$dest")" ]; then
-        mv "$src" "$dest"
-    else
-        echo "Sudo privileges are required to install to $INSTALL_DIR"
-        sudo mv "$src" "$dest"
-    fi
-    echo "Beacon installed to $dest"
-    echo "Run: $dest_binary_name --help"
-}
-
-# Check if the binary already exists
-if [ -e "$INSTALL_DIR/$BINARY" ]; then
-    echo "A file named '$BINARY' already exists in $INSTALL_DIR."
-    printf "What would you like to do? [(o)verwrite, (r)ename, (c)ancel]: "
-    # Read specifically from the terminal device to support curl | sh
-    read -r choice < /dev/tty
-    
-    case "$choice" in
-        o|O)
-            echo "Overwriting existing binary..."
-            move_binary "/tmp/$BINARY" "$INSTALL_DIR/$BINARY"
-            ;;
-        r|R)
-            printf "Enter a new name for the binary: "
-            read -r new_name < /dev/tty
-            if [ -z "$new_name" ]; then
-                echo "No name entered. Aborting." >&2
-                exit 1
-            fi
-            if [ -e "$INSTALL_DIR/$new_name" ]; then
-                echo "File '$new_name' also exists. Aborting." >&2
-                exit 1
-            fi
-            echo "Installing with new name: $new_name"
-            move_binary "/tmp/$BINARY" "$INSTALL_DIR/$new_name"
-            ;;
-        *)
-            echo "Installation cancelled."
-            exit 0
-            ;;
-    esac
+if [ -w "$INSTALL_DIR" ]; then
+    mv "$TMP_BIN" "$INSTALL_DIR/$BINARY"
 else
-    # No conflict, proceed with standard installation
-    move_binary "/tmp/$BINARY" "$INSTALL_DIR/$BINARY"
+    echo "Sudo privileges are required to install to $INSTALL_DIR"
+    sudo mv "$TMP_BIN" "$INSTALL_DIR/$BINARY"
 fi
+
+echo "Successfully installed to $INSTALL_DIR/$BINARY"
+echo "Run: $BINARY --help"
