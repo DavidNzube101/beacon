@@ -148,7 +148,7 @@ async fn call_openai(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
 
 
 
-const BEACON_CLOUD_URL: &str = "http://localhost:8080";
+const BEACON_CLOUD_URL: &str = "https://beacon-latest.onrender.com";
 
 async fn call_beacon_cloud(ctx: &RepoContext, _prompt: &str) -> Result<AgentsManifest> {
     let client = Client::new();

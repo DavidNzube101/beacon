@@ -67,8 +67,7 @@ move_binary() {
 # Check if the binary already exists
 if [ -e "$INSTALL_DIR/$BINARY" ]; then
     echo "A file named '$BINARY' already exists in $INSTALL_DIR."
-    printf "What would you like to do? [(o)verwrite, (r)ename, (c)ancel]: "
-    read -r choice
+    read -rp "What would you like to do? [(o)verwrite, (r)ename, (c)ancel]: " choice
     
     case "$choice" in
         o|O)
@@ -76,8 +75,7 @@ if [ -e "$INSTALL_DIR/$BINARY" ]; then
             move_binary "/tmp/$BINARY" "$INSTALL_DIR/$BINARY"
             ;;
         r|R)
-            printf "Enter a new name for the binary: "
-            read -r new_name
+            read -rp "Enter a new name for the binary: " new_name
             if [ -z "$new_name" ]; then
                 echo "No name entered. Aborting." >&2
                 exit 1
