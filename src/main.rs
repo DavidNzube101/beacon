@@ -9,17 +9,27 @@ mod verifier;
 
 mod tests;
 mod db;
-use clap::{Parser, Subcommand};
+use anyhow::Context;
 use axum::{
-    routing::post,
-    routing::get,
-    Router,
-    Json,
-    http::{StatusCode, HeaderMap},
+    error_handling::HandleErrorLayer,
+    extract::ConnectInfo,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
+    routing::{get, post},
+    BoxError, Json, Router,
+};
+use clap::{Parser, Subcommand};
+use governor::{
+    clock::DefaultClock,
+    state::{keyed::DefaultKeyedStateStore, InMemoryState, NotKeyed},
+    Quota, RateLimiter,
 };
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
+use std::{net::SocketAddr, num::NonZeroU32, time::Duration};
+use tower::ServiceBuilder;
+use tower_governor::{
+    governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
+};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
