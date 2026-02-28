@@ -52,24 +52,36 @@ get_target() {
     esac
 }
 
-# --- Smart Conflict Detection ---
+# --- Rigorous Conflict Detection ---
+# We use a perfect combination of checks to identify our binary
 is_our_binary() {
-    bin_path="$1"
-    if [ ! -x "$bin_path" ]; then return 1; fi
-    # Check if the help output contains our signature string
-    if "$bin_path" --help 2>&1 | grep "agent-ready" > /dev/null; then
-        return 0
-    fi
-    return 1
+    path="$1"
+    [ -x "$path" ] || return 1
+    
+    # 1. Check version format (must start with "beacon X.Y.Z")
+    "$path" --version 2>&1 | grep -q "^beacon [0-9]" || return 1
+    
+    # 2. Check for the unique project tagline
+    help_text=$("$path" --help 2>&1)
+    echo "$help_text" | grep -q "agent-ready" || return 1
+    
+    # 3. Verify the core command set exists
+    echo "$help_text" | grep -q "generate" || return 1
+    echo "$help_text" | grep -q "validate" || return 1
+    echo "$help_text" | grep -q "serve" || return 1
+    
+    return 0
 }
 
 if [ -e "$INSTALL_DIR/$BINARY" ]; then
     if is_our_binary "$INSTALL_DIR/$BINARY"; then
-        echo "Existing Beacon installation detected. Proceeding with upgrade..."
+        echo "Beacon installation detected at $INSTALL_DIR/$BINARY. Proceeding with upgrade to $VERSION..."
     else
         echo "Error: A file named '$BINARY' already exists in $INSTALL_DIR and does not appear to be Beacon."
         echo "To install Beacon with a different name, pass it as an argument:"
         echo "  curl -fsSL https://raw.githubusercontent.com/DavidNzube101/beacon/master/install.sh | sh -s -- your-custom-name"
+        echo ""
+        echo "Example: curl ... | sh -s -- beacon-ai $VERSION"
         exit 1
     fi
 fi
@@ -88,10 +100,10 @@ fi
 chmod +x "$TMP_BIN"
 
 if [ -w "$INSTALL_DIR" ]; then
-    mv "$TMP_BIN" "$INSTALL_DIR/$BINARY"
+    mv -f "$TMP_BIN" "$INSTALL_DIR/$BINARY"
 else
     echo "Sudo privileges are required to install to $INSTALL_DIR"
-    sudo mv "$TMP_BIN" "$INSTALL_DIR/$BINARY"
+    sudo mv -f "$TMP_BIN" "$INSTALL_DIR/$BINARY"
 fi
 
 echo "Successfully installed to $INSTALL_DIR/$BINARY"
