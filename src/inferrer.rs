@@ -322,5 +322,8 @@ fn build_prompt(ctx: &RepoContext) -> String {
 }
 
 fn truncate(s: &str, max_chars: usize) -> &str {
-    if s.len() <= max_chars { s } else { &s[..max_chars] }
+    match s.char_indices().nth(max_chars) {
+        None => s,
+        Some((idx, _)) => &s[..idx],
+    }
 }
