@@ -9,29 +9,28 @@ mod verifier;
 
 mod tests;
 mod db;
+
 use anyhow::Context;
 use axum::{
-    error_handling::HandleErrorLayer,
-    extract::ConnectInfo,
-    http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    extract::{ConnectInfo, State},
+    http::{HeaderMap, Method, Request, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{get, post},
-    BoxError, Json, Router,
+    Json, Router,
 };
 use clap::{Parser, Subcommand};
-use governor::{
-    clock::DefaultClock,
-    state::{keyed::DefaultKeyedStateStore, InMemoryState, NotKeyed},
-    Quota, RateLimiter,
-};
+use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, num::NonZeroU32, time::Duration};
-use tower::ServiceBuilder;
-use tower_governor::{
-    governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
-};
+use std::{net::SocketAddr, sync::Arc, time::SystemTime};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+type RedisPool = Arc<redis::Client>;
+
+// Rate Limiting Constants
+const RATE_LIMIT_WINDOW_SECONDS: u64 = 60;
+const RATE_LIMIT_MAX_REQUESTS: usize = 20;
 
 #[derive(Parser)]
 #[command(name = "beacon")]
@@ -71,10 +70,6 @@ struct GenerateRequest {
     provider: Option<String>,
 }
 
-fn default_output() -> String {
-    "AGENTS.md".to_string()
-}
-
 #[derive(Serialize)]
 struct GenerateResponse {
     success: bool,
@@ -111,6 +106,37 @@ async fn health() -> Json<HealthResponse> {
     })
 }
 
+async fn rate_limit_middleware<B>(
+    State(redis_pool): State<RedisPool>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    request: Request<B>,
+    next: Next<B>,
+) -> Result<Response, StatusCode> {
+    let key = addr.ip().to_string();
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    
+    let mut conn = redis_pool.get_async_connection().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let (count, _): (usize, ()) = redis::pipe()
+        .atomic()
+        .zrembyscore(&key, 0, now - RATE_LIMIT_WINDOW_SECONDS)
+        .zadd(&key, now, now)
+        .zcard(&key)
+        .expire(&key, RATE_LIMIT_WINDOW_SECONDS as usize)
+        .query_async(&mut conn)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if count > RATE_LIMIT_MAX_REQUESTS {
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
+    
+    Ok(next.run(request).await)
+}
+
 async fn handle_generate(
     headers: HeaderMap,
     Json(req): Json<GenerateRequest>,
@@ -130,14 +156,18 @@ async fn handle_generate(
                 return Err((StatusCode::CONFLICT, "Transaction hash already used".to_string()));
             }
 
-            let amount = std::env::var("PAYMENT_AMOUNT_USDC").unwrap_or_else(|_| "0.09".to_string()).parse::<f64>().unwrap_or(0.09);
+            let amount = std::env::var("PAYMENT_AMOUNT_USDC")
+                .unwrap_or_else(|_| "0.09".to_string())
+                .parse::<f64>()
+                .unwrap_or(0.09);
             let wallet = if ch == "base" {
                 std::env::var("BEACON_WALLET_BASE").unwrap_or_default()
             } else {
                 std::env::var("BEACON_WALLET_SOLANA").unwrap_or_default()
             };
 
-            let verified = verifier::verify_payment(ch, txn, amount, &wallet).await
+            let verified = verifier::verify_payment(ch, txn, amount, &wallet)
+                .await
                 .map_err(|e| (StatusCode::BAD_REQUEST, format!("Verification failed: {}", e)))?;
 
             if !verified {
@@ -148,7 +178,8 @@ async fn handle_generate(
             db::record_payment(rid, txn, ch, None).await.ok();
             actual_provider = "gemini".to_string();
         } else {
-            let rid = db::create_run(&req.repo_context.name).await
+            let rid = db::create_run(&req.repo_context.name)
+                .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
             let amount = std::env::var("PAYMENT_AMOUNT_USDC").unwrap_or_else(|_| "0.09".to_string());
@@ -167,11 +198,13 @@ async fn handle_generate(
                     ("x-payment-run-id", rid),
                 ],
                 "Payment required",
-            ).into_response());
+            )
+                .into_response());
         }
     }
 
-    let manifest = inferrer::infer_capabilities(&req.repo_context, &actual_provider, None).await
+    let manifest = inferrer::infer_capabilities(&req.repo_context, &actual_provider, None)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let tmp_path = format!("/tmp/beacon_{}.md", &req.repo_context.name);
@@ -193,7 +226,8 @@ async fn handle_generate(
         endpoints: manifest.endpoints.len(),
         repo_name: manifest.name.clone(),
         agents_md: content,
-    }).into_response())
+    })
+    .into_response())
 }
 
 async fn handle_validate(
@@ -217,7 +251,12 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Generate { target, output, provider, api_key } => {
+        Commands::Generate {
+            target,
+            output,
+            provider,
+            api_key,
+        } => {
             println!("🔦 Beacon — scanning {}...", target);
             let ctx = scanner::scan_local(&target)?;
             println!("📦 Repo: {} ({} source files)", ctx.name, ctx.source_files.len());
@@ -228,10 +267,13 @@ async fn main() -> anyhow::Result<()> {
             println!("   Capabilities: {}", manifest.capabilities.len());
             println!("   Endpoints:    {}", manifest.endpoints.len());
         }
-        Commands::Validate { file, check_endpoints } => {
+        Commands::Validate {
+            file,
+            check_endpoints,
+        } => {
             println!("🔦 Beacon — validating {}...", file);
-            let content = std::fs::read_to_string(&file)
-                .map_err(|_| anyhow::anyhow!("File not found: {}", file))?;
+            let content =
+                std::fs::read_to_string(&file).map_err(|_| anyhow::anyhow!("File not found: {}", file))?;
             let mut result = validator::validate_content(&content)?;
             if check_endpoints {
                 println!("   🌐 Checking endpoint reachability...");
@@ -243,51 +285,42 @@ async fn main() -> anyhow::Result<()> {
             println!("   Warnings: {}", result.warnings.len());
             if !result.errors.is_empty() {
                 println!("\n❌ Errors:");
-                for e in &result.errors { println!("   • {}", e); }
+                for e in &result.errors {
+                    println!("   • {}", e);
+                }
             }
             if !result.warnings.is_empty() {
                 println!("\n⚠️  Warnings:");
-                for w in &result.warnings { println!("   • {}", w); }
+                for w in &result.warnings {
+                    println!("   • {}", w);
+                }
             }
             if !result.endpoint_results.is_empty() {
                 println!("\n🌐 Endpoint Results:");
                 for ep in &result.endpoint_results {
-                    let status = ep.status_code
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "—".to_string());
-                    println!("   {} {} ({})",
+                    let status = ep.status_code.map(|s| s.to_string()).unwrap_or_else(|| "—".to_string());
+                    println!(
+                        "   {} {} ({})",
                         if ep.reachable { "✅" } else { "❌" },
-                        ep.endpoint, status);
+                        ep.endpoint,
+                        status
+                    );
                 }
             }
         }
         Commands::Serve { port } => {
             let redis_url = std::env::var("REDIS_URL").context("REDIS_URL must be set")?;
-            let redis_client = redis::Client::open(redis_url)?;
-            let redis_conn_manager = redis::aio::ConnectionManager::new(redis_client).await?;
-
-            let governor_conf = Box::new(
-                GovernorConfigBuilder::default()
-                    .key_extractor(SmartIpKeyExtractor)
-                    .use_headers()
-                    .finish()
-                    .unwrap(),
-            );
+            let redis_client = Arc::new(redis::Client::open(redis_url)?);
             
             let app = Router::new()
                 .route("/health", get(health))
-                .route("/generate", post(handle_generate))
                 .route("/validate", post(handle_validate))
-                .layer(
-                    ServiceBuilder::new()
-                        .layer(HandleErrorLayer::new(|e: BoxError| async move {
-                            (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                format!("Unhandled internal error: {}", e),
-                            )
-                        }))
-                        .layer(GovernorLayer::new_with_conn(governor_conf, redis_conn_manager)),
-                );
+                .route("/generate", post(handle_generate))
+                .route_layer(middleware::from_fn_with_state(
+                    redis_client.clone(),
+                    rate_limit_middleware,
+                ))
+                .with_state(redis_client);
 
             let addr = SocketAddr::from(([0, 0, 0, 0], port));
             println!("🔦 Beacon API");
