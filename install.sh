@@ -4,14 +4,27 @@ set -e
 REPO="DavidNzube101/beacon"
 INSTALL_DIR="/usr/local/bin"
 
-# Get binary name from the first argument, default to "beacon"
+# Get binary name from first argument (default: beacon)
 BINARY="${1:-beacon}"
+# Get version from second argument (default: latest)
+VERSION_ARG="${2:-latest}"
 
 get_latest_version() {
     curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
         | grep '"tag_name"' \
         | sed 's/.*"tag_name": "\(.*\)".*/\1/'
 }
+
+# Resolve the actual version to download
+if [ "$VERSION_ARG" = "latest" ]; then
+    VERSION=$(get_latest_version)
+else
+    # Ensure version starts with 'v'
+    case "$VERSION_ARG" in
+        v*) VERSION="$VERSION_ARG" ;;
+        *)  VERSION="v$VERSION_ARG" ;;
+    esac
+fi
 
 get_target() {
     OS=$(uname -s)
@@ -39,17 +52,25 @@ get_target() {
     esac
 }
 
-# Check if the binary already exists before doing any work
+# --- Smart Conflict Detection ---
+is_our_binary() {
+    path="$1"
+    if [ ! -x "$path" ]; then return 1; fi
+    # Run the binary and check for our unique signature in help output
+    "$path" --help 2>&1 | grep -q "Make any repo agent-ready"
+}
+
 if [ -e "$INSTALL_DIR/$BINARY" ]; then
-    echo "Error: A file named '$BINARY' already exists in $INSTALL_DIR."
-    echo "To install Beacon with a different name, pass it as an argument:"
-    echo "  curl -fsSL https://raw.githubusercontent.com/DavidNzube101/beacon/master/install.sh | sh -s -- your-custom-name"
-    echo ""
-    echo "If you want to update the existing installation, please remove the old file first."
-    exit 1
+    if is_our_binary "$INSTALL_DIR/$BINARY"; then
+        echo "Updating existing Beacon installation at $INSTALL_DIR/$BINARY..."
+    else
+        echo "Error: A file named '$BINARY' already exists in $INSTALL_DIR and it doesn't appear to be Beacon."
+        echo "To install Beacon with a different name, pass it as an argument:"
+        echo "  curl -fsSL https://raw.githubusercontent.com/DavidNzube101/beacon/master/install.sh | sh -s -- your-custom-name"
+        exit 1
+    fi
 fi
 
-VERSION=$(get_latest_version)
 TARGET=$(get_target)
 URL="https://github.com/$REPO/releases/download/$VERSION/$TARGET"
 
@@ -57,7 +78,10 @@ echo "Installing Beacon $VERSION as '$BINARY'..."
 echo "Downloading $TARGET..."
 
 TMP_BIN="/tmp/beacon_$(date +%s)"
-curl -fsSL "$URL" -o "$TMP_BIN"
+if ! curl -fsSL "$URL" -o "$TMP_BIN"; then
+    echo "Error: Could not download Beacon version $VERSION. Please ensure the version exists." >&2
+    exit 1
+fi
 chmod +x "$TMP_BIN"
 
 if [ -w "$INSTALL_DIR" ]; then
