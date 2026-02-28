@@ -47,8 +47,6 @@ echo "Downloading $TARGET..."
 curl -fsSL "$URL" -o "/tmp/$BINARY"
 chmod +x "/tmp/$BINARY"
 
-# --- New logic starts here ---
-
 # Function to perform the move, using sudo if needed
 move_binary() {
     local src="$1"
@@ -67,7 +65,9 @@ move_binary() {
 # Check if the binary already exists
 if [ -e "$INSTALL_DIR/$BINARY" ]; then
     echo "A file named '$BINARY' already exists in $INSTALL_DIR."
-    read -rp "What would you like to do? [(o)verwrite, (r)ename, (c)ancel]: " choice
+    printf "What would you like to do? [(o)verwrite, (r)ename, (c)ancel]: "
+    # Read specifically from the terminal device to support curl | sh
+    read -r choice < /dev/tty
     
     case "$choice" in
         o|O)
@@ -75,7 +75,8 @@ if [ -e "$INSTALL_DIR/$BINARY" ]; then
             move_binary "/tmp/$BINARY" "$INSTALL_DIR/$BINARY"
             ;;
         r|R)
-            read -rp "Enter a new name for the binary: " new_name
+            printf "Enter a new name for the binary: "
+            read -r new_name < /dev/tty
             if [ -z "$new_name" ]; then
                 echo "No name entered. Aborting." >&2
                 exit 1
