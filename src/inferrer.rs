@@ -148,13 +148,11 @@ async fn call_openai(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
 // ── Beacon Cloud (x402) ────────────────────────────────────────────────────
 
 async fn call_beacon_cloud(_ctx: &RepoContext, _prompt: &str) -> Result<AgentsManifest> {
-    // x402 payment flow — coming soon
+    // todo - x402 payme
     anyhow::bail!(
         "beacon-ai-cloud is coming soon. Use --provider gemini/claude/openai with your own key for now."
     )
 }
-
-// ── Helpers ────────────────────────────────────────────────────────────────
 
 /// Resolve API key: CLI flag → env var → error
 fn resolve_key(cli_key: Option<&str>, env_var: &str, provider: &str) -> Result<String> {
