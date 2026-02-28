@@ -35,6 +35,12 @@ enum Commands {
         /// Output file path
         #[arg(short, long, default_value = "AGENTS.md")]
         output: String,
+        /// AI provider: gemini, claude, openai, beacon-ai-cloud
+        #[arg(long, default_value = "gemini")]
+        provider: String,
+        /// Your API key (not needed for beacon-ai-cloud)
+        #[arg(long)]
+        api_key: Option<String>,
     },
     /// Validate an existing AGENTS.md file
     Validate {
@@ -154,17 +160,19 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Generate { target, output } => {
+
+        Commands::Generate { target, output, provider, api_key } => {
             println!("🔦 Beacon — scanning {}...", target);
 
             let ctx = scanner::scan_local(&target)?;
             println!("📦 Repo: {} ({} source files)", ctx.name, ctx.source_files.len());
 
-            let manifest = inferrer::infer_capabilities(&ctx).await?;
+            let manifest = inferrer::infer_capabilities(&ctx, &provider, api_key.as_deref()).await?;
 
             generator::generate_agents_md(&manifest, &output)?;
 
             println!("\n✅ Done! AGENTS.md written to: {}", output);
+            println!("   Provider:     {}", provider);
             println!("   Capabilities: {}", manifest.capabilities.len());
             println!("   Endpoints:    {}", manifest.endpoints.len());
         }
