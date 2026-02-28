@@ -16,7 +16,7 @@ const SKIP_FILES: &[&str] = &[
 
 const MAX_FILE_BYTES: u64 = 50_000;
 
-const MAX_SOURCE_FILES: usize = 20;
+const MAX_SOURCE_FILES: usize = 50;
 
 pub fn scan_local(repo_path: &str) -> Result<RepoContext> {
     let root = Path::new(repo_path).canonicalize()?;

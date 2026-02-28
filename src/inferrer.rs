@@ -275,6 +275,7 @@ fn build_prompt(ctx: &RepoContext) -> String {
     let mut parts: Vec<String> = vec![
         "You are an expert at analyzing software repositories and extracting agent-usable capabilities.".into(),
         "Analyze the following repository context and return a JSON object describing its capabilities for AI agents.".into(),
+        "GUIDANCE: Look beyond just utility scripts. Identify server-side capabilities, REST API endpoints (e.g., NestJS/Express/FastAPI decorators like @Get, @Post, @app.get), and background services (notifications, chat systems, indexers).".into(),
         "CRITICAL: Return ONLY valid JSON. No markdown, no explanation, no preamble.".into(),
         "".into(),
         "The JSON must match this exact schema:".into(),
