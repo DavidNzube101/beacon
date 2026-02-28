@@ -262,10 +262,44 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Serve { port } => {
+            let redis_url = std::env::var("REDIS_URL").context("REDIS_URL must be set")?;
+            let redis_client = redis::Client::open(redis_url)?;
+            let redis_conn_manager = redis::aio::ConnectionManager::new(redis_client).await?;
+
+            let governor_conf = Box::new(
+                GovernorConfigBuilder::default()
+                    .key_extractor(SmartIpKeyExtractor)
+                    .period(Duration::from_secs(60))
+                    .burst_size(10)
+                    .use_headers()
+                    .finish()
+                    .unwrap(),
+            );
+            
+            let governor_limiter = RateLimiter::new(
+                Quota::per_minute(NonZeroU32::new(10).unwrap()),
+                DefaultKeyedStateStore::new(Default::default()),
+                &DefaultClock::default(),
+            );
+
             let app = Router::new()
                 .route("/health", get(health))
                 .route("/generate", post(handle_generate))
-                .route("/validate", post(handle_validate));
+                .route("/validate", post(handle_validate))
+                .layer(
+                    ServiceBuilder::new()
+                        .layer(HandleErrorLayer::new(|e: BoxError| async move {
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                format!("Unhandled internal error: {}", e),
+                            )
+                        }))
+                        .layer(GovernorLayer {
+                            config: Box::leak(governor_conf),
+                            store: redis_conn_manager,
+                        }),
+                );
+
             let addr = SocketAddr::from(([0, 0, 0, 0], port));
             println!("🔦 Beacon API");
             println!("   http://0.0.0.0:{}", port);
@@ -273,7 +307,8 @@ async fn main() -> anyhow::Result<()> {
             println!("   POST /validate  — validate an AGENTS.md file");
             println!("   GET  /health    — health check");
             let listener = tokio::net::TcpListener::bind(addr).await?;
-            axum::serve(listener, app).await?;
+            axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+                .await?;
         }
     }
     Ok(())
