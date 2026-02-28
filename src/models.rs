@@ -52,24 +52,24 @@ pub struct RateLimits {
     pub notes: Option<String>,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct RepoContext {
     pub name: String,
     pub readme: Option<String>,
     pub source_files: Vec<SourceFile>,
     pub openapi_spec: Option<String>,
-    pub package_manifest: Option<String>, 
+    pub package_manifest: Option<String>,
     pub existing_agents_md: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SourceFile {
     pub path: String,
     pub language: Language,
     pub content: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Language {
     Rust,
     Python,
