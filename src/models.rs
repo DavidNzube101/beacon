@@ -2,7 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// The full AGENTS.md document structure
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AgentsManifest {
     pub name: String,
@@ -15,7 +14,6 @@ pub struct AgentsManifest {
     pub contact: Option<String>,
 }
 
-/// A single agent-usable capability
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Capability {
     pub name: String,
@@ -25,7 +23,6 @@ pub struct Capability {
     pub examples: Vec<String>,
 }
 
-/// A declared API endpoint
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Endpoint {
     pub path: String,
@@ -44,7 +41,7 @@ pub struct Parameter {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Authentication {
-    pub r#type: String, // "bearer", "api_key", "none"
+    pub r#type: String,
     pub description: Option<String>,
 }
 
@@ -55,14 +52,13 @@ pub struct RateLimits {
     pub notes: Option<String>,
 }
 
-/// Raw repo data collected by the scanner
 #[derive(Debug, Default)]
 pub struct RepoContext {
     pub name: String,
     pub readme: Option<String>,
     pub source_files: Vec<SourceFile>,
     pub openapi_spec: Option<String>,
-    pub package_manifest: Option<String>, // Cargo.toml, package.json, etc.
+    pub package_manifest: Option<String>, //  stuffs like go.mod Cargo.toml, package.json, etc.
     pub existing_agents_md: Option<String>,
 }
 
@@ -96,7 +92,6 @@ impl Language {
     }
 }
 
-/// Validation result
 #[derive(Debug)]
 pub struct ValidationResult {
     pub valid: bool,

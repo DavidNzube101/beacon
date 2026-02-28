@@ -28,36 +28,26 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Generate an AGENTS.md for a local repo or GitHub URL
     Generate {
-        /// Path to local repo or GitHub URL
         target: String,
-        /// Output file path
         #[arg(short, long, default_value = "AGENTS.md")]
         output: String,
-        /// AI provider: gemini, claude, openai, beacon-ai-cloud
         #[arg(long, default_value = "gemini")]
         provider: String,
-        /// Your API key (not needed for beacon-ai-cloud)
         #[arg(long)]
         api_key: Option<String>,
     },
-    /// Validate an existing AGENTS.md file
     Validate {
-        /// Path to AGENTS.md
+        /// path
         file: String,
-        /// Also test if declared endpoints are reachable
         #[arg(long)]
         check_endpoints: bool,
     },
-    /// Start the Beacon web API server
     Serve {
         #[arg(short, long, default_value = "8080")]
         port: u16,
     },
 }
-
-// ── API request/response types ─────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct GenerateRequest {
@@ -98,8 +88,6 @@ struct HealthResponse {
     name: &'static str,
 }
 
-// ── Handlers ───────────────────────────────────────────────────────────────
-
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
@@ -111,16 +99,14 @@ async fn health() -> Json<HealthResponse> {
 async fn handle_generate(
     Json(req): Json<GenerateRequest>,
 ) -> Result<Json<GenerateResponse>, (StatusCode, String)> {
-    // Scan
     let ctx = scanner::scan_local(&req.repo_url)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
-    // Infer
-    let manifest = inferrer::infer_capabilities(&ctx)
+
+        let manifest = inferrer::infer_capabilities(&ctx)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Generate markdown
     let tmp_path = format!("/tmp/beacon_{}.md", &ctx.name);
     generator::generate_agents_md(&manifest, &tmp_path)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -150,7 +136,6 @@ async fn handle_validate(
     }))
 }
 
-// ── Main ───────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

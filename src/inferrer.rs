@@ -3,7 +3,9 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use crate::models::{RepoContext, AgentsManifest};
 
-// Provider API URLs
+
+
+
 const GEMINI_URL: &str =
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 const CLAUDE_URL: &str =
@@ -48,7 +50,6 @@ pub async fn infer_capabilities(
     Ok(result)
 }
 
-// ── Gemini ─────────────────────────────────────────────────────────────────
 
 async fn call_gemini(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
     let client = Client::new();
@@ -76,7 +77,8 @@ async fn call_gemini(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
     parse_manifest(text)
 }
 
-// ── Claude ─────────────────────────────────────────────────────────────────
+
+
 
 async fn call_claude(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
     let client = Client::new();
@@ -108,7 +110,6 @@ async fn call_claude(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
     parse_manifest(text)
 }
 
-// ── OpenAI ─────────────────────────────────────────────────────────────────
 
 async fn call_openai(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
     let client = Client::new();
@@ -145,7 +146,7 @@ async fn call_openai(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
     parse_manifest(text)
 }
 
-// ── Beacon Cloud (x402) ────────────────────────────────────────────────────
+
 
 async fn call_beacon_cloud(_ctx: &RepoContext, _prompt: &str) -> Result<AgentsManifest> {
     // todo - x402 payme
@@ -154,7 +155,7 @@ async fn call_beacon_cloud(_ctx: &RepoContext, _prompt: &str) -> Result<AgentsMa
     )
 }
 
-/// Resolve API key: CLI flag → env var → error
+/// resolving API key here, flow would be cli flag > env > error
 fn resolve_key(cli_key: Option<&str>, env_var: &str, provider: &str) -> Result<String> {
     if let Some(key) = cli_key {
         return Ok(key.to_string());
