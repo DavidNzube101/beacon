@@ -265,7 +265,7 @@ async fn main() -> anyhow::Result<()> {
             println!("   POST /validate  — validate an AGENTS.md file");
             println!("   GET  /health    — health check");
             let listener = tokio::net::TcpListener::bind(addr).await?;
-            ax_server::serve(listener, app).await?;
+            axum::serve(listener, app).await?;
         }
     }
     Ok(())
