@@ -21,10 +21,12 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Parser)]
 #[command(name = "beacon")]
 #[command(about = "🔦 Make any repo agent-ready. Instantly.")]
-#[command(version = "0.1.0")]
+#[command(version = VERSION)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -94,7 +96,7 @@ struct HealthResponse {
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
-        version: "0.1.0",
+        version: VERSION,
         name: "beacon",
     })
 }

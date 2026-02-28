@@ -158,9 +158,19 @@ async fn call_beacon_cloud(ctx: &RepoContext, _prompt: &str) -> Result<AgentsMan
 
     println!("   ⚡️ Contacting Beacon Cloud...");
 
+    let payload = json!({
+        "provider": "beacon-ai-cloud",
+        "name": ctx.name,
+        "readme": ctx.readme,
+        "source_files": ctx.source_files,
+        "openapi_spec": ctx.openapi_spec,
+        "package_manifest": ctx.package_manifest,
+        "existing_agents_md": ctx.existing_agents_md
+    });
+
     let initial_res = client
         .post(&generate_url)
-        .json(ctx)
+        .json(&payload)
         .send()
         .await
         .context("Failed to connect to Beacon Cloud API")?;
@@ -209,7 +219,7 @@ async fn call_beacon_cloud(ctx: &RepoContext, _prompt: &str) -> Result<AgentsMan
         .header("x-payment-run-id", run_id)
         .header("x-payment-chain", &chain)
         .header("x-payment-txn-hash", txn_hash)
-        .json(ctx)
+        .json(&payload)
         .send()
         .await
         .context("Failed to send final request to Beacon Cloud")?;
