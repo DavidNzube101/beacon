@@ -2,6 +2,15 @@ use anyhow::{Result, Context};
 use reqwest::Client;
 use serde_json::{json, Value};
 use crate::models::{RepoContext, AgentsManifest};
+use crate::errors::BeaconError;
+use once_cell::sync::Lazy;
+
+static CLIENT: Lazy<Client> = Lazy::new(|| {
+    Client::builder()
+        .use_rustls_tls()
+        .build()
+        .expect("Failed to create reqwest client")
+});
 
 
 
@@ -52,9 +61,7 @@ pub async fn infer_capabilities(
 
 
 async fn call_gemini(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
-    let client = Client::new();
-
-    let response = client
+    let response = CLIENT
         .post(format!("{}?key={}", GEMINI_URL, api_key))
         .json(&json!({
             "contents": [{ "parts": [{ "text": prompt }] }],
@@ -81,9 +88,7 @@ async fn call_gemini(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
 
 
 async fn call_claude(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
-    let client = Client::new();
-
-    let response = client
+    let response = CLIENT
         .post(CLAUDE_URL)
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
@@ -112,9 +117,7 @@ async fn call_claude(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
 
 
 async fn call_openai(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
-    let client = Client::new();
-
-    let response = client
+    let response = CLIENT
         .post(OPENAI_URL)
         .bearer_auth(api_key)
         .json(&json!({
@@ -151,7 +154,6 @@ async fn call_openai(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
 const BEACON_CLOUD_URL: &str = "https://beacon-latest.onrender.com";
 
 async fn call_beacon_cloud(ctx: &RepoContext, _prompt: &str) -> Result<AgentsManifest> {
-    let client = Client::new();
     let beacon_url = std::env::var("BEACON_CLOUD_URL")
         .unwrap_or_else(|_| BEACON_CLOUD_URL.to_string());
     let generate_url = format!("{}/generate", beacon_url);
@@ -168,76 +170,70 @@ async fn call_beacon_cloud(ctx: &RepoContext, _prompt: &str) -> Result<AgentsMan
         "existing_agents_md": ctx.existing_agents_md
     });
 
-    let initial_res = client
+    let initial_res = CLIENT
         .post(&generate_url)
         .json(&payload)
         .send()
         .await
         .context("Failed to connect to Beacon Cloud API")?;
 
-    if initial_res.status() != reqwest::StatusCode::PAYMENT_REQUIRED {
-        let status = initial_res.status();
-        let error_text = initial_res.text().await?;
-        anyhow::bail!(
-            "Unexpected response from Beacon Cloud. Expected HTTP 402, got status {}. Error: {}",
-            status,
-            error_text
-        );
+    if initial_res.status() == reqwest::StatusCode::PAYMENT_REQUIRED {
+        let headers = initial_res.headers();
+        let amount = headers.get("x-payment-amount").and_then(|v| v.to_str().ok()).unwrap_or("N/A").to_string();
+        let run_id = headers.get("x-payment-run-id").and_then(|v| v.to_str().ok()).context("Missing run ID from server")?.to_string();
+        let base_addr = headers.get("x-payment-address-base").and_then(|v| v.to_str().ok()).unwrap_or("N/A").to_string();
+        let sol_addr = headers.get("x-payment-address-solana").and_then(|v| v.to_str().ok()).unwrap_or("N/A").to_string();
+
+        println!("   💰 Payment required to proceed.");
+        println!("\n--------------------------------------------------");
+        println!("Please send {} USDC to one of these addresses:", amount);
+        println!("  - Base:   {}", base_addr);
+        println!("  - Solana: {}", sol_addr);
+        println!("--------------------------------------------------\n");
+
+        let mut chain = String::new();
+        println!("Which chain did you pay on? (base/solana)");
+        std::io::stdin().read_line(&mut chain).context("Failed to read chain")?;
+        let chain = chain.trim().to_lowercase();
+        
+        let mut txn_hash = String::new();
+        println!("Please paste the transaction hash:");
+        std::io::stdin().read_line(&mut txn_hash).context("Failed to read transaction hash")?;
+        let txn_hash = txn_hash.trim();
+
+        println!("   🔍 Verifying payment...");
+
+        let final_res = CLIENT
+            .post(&generate_url)
+            .header("x-payment-run-id", run_id)
+            .header("x-payment-chain", &chain)
+            .header("x-payment-txn-hash", txn_hash)
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to send final request to Beacon Cloud")?;
+
+        if !final_res.status().is_success() {
+            let status = final_res.status().as_u16();
+            let raw: Value = final_res.json().await.unwrap_or(json!({"error": "Unknown error"}));
+            let message = raw["error"].as_str().unwrap_or("Unknown error").to_string();
+            return Err(BeaconError::CloudError { status, message }.into());
+        }
+
+        let raw: Value = final_res.json().await.context("Failed to parse final response from Beacon Cloud")?;
+        let agents_md_content = raw["agents_md"].as_str().context("Missing 'agents_md' field in final response")?;
+        return parse_manifest(agents_md_content);
     }
 
-    println!("   💰 Payment required to proceed.");
-
-    let headers = initial_res.headers();
-    let amount = headers.get("x-payment-amount").and_then(|v| v.to_str().ok()).unwrap_or("N/A");
-    let run_id = headers.get("x-payment-run-id").and_then(|v| v.to_str().ok()).context("Missing run ID from server")?;
-    let base_addr = headers.get("x-payment-address-base").and_then(|v| v.to_str().ok()).unwrap_or("N/A");
-    let sol_addr = headers.get("x-payment-address-solana").and_then(|v| v.to_str().ok()).unwrap_or("N/A");
-
-    println!("\n--------------------------------------------------");
-    println!("Please send {} USDC to one of these addresses:", amount);
-    println!("  - Base:   {}", base_addr);
-    println!("  - Solana: {}", sol_addr);
-    println!("--------------------------------------------------\n");
-
-    let mut chain = String::new();
-    println!("Which chain did you pay on? (base/solana)");
-    std::io::stdin().read_line(&mut chain).context("Failed to read chain")?;
-    let chain = chain.trim().to_lowercase();
-    if chain != "base" && chain != "solana" {
-        anyhow::bail!("Invalid chain specified. Please use 'base' or 'solana'.");
+    if !initial_res.status().is_success() {
+        let status = initial_res.status().as_u16();
+        let raw: Value = initial_res.json().await.unwrap_or(json!({"error": "Unknown error"}));
+        let message = raw["error"].as_str().unwrap_or("Unknown error").to_string();
+        return Err(BeaconError::CloudError { status, message }.into());
     }
 
-    let mut txn_hash = String::new();
-    println!("Please paste the transaction hash:");
-    std::io::stdin().read_line(&mut txn_hash).context("Failed to read transaction hash")?;
-    let txn_hash = txn_hash.trim();
-
-    println!("   🔍 Verifying payment...");
-
-    let final_res = client
-        .post(&generate_url)
-        .header("x-payment-run-id", run_id)
-        .header("x-payment-chain", &chain)
-        .header("x-payment-txn-hash", txn_hash)
-        .json(&payload)
-        .send()
-        .await
-        .context("Failed to send final request to Beacon Cloud")?;
-
-    if !final_res.status().is_success() {
-        let status = final_res.status();
-        let error_text = final_res.text().await.unwrap_or_else(|_| "Could not read error body".to_string());
-        anyhow::bail!(
-            "Beacon Cloud returned an error after payment. Status: {}. Error: {}",
-            status,
-            error_text,
-        );
-    }
-
-    let raw: Value = final_res.json().await.context("Failed to parse final response from Beacon Cloud")?;
-    
-    let agents_md_content = raw["agents_md"].as_str().context("Missing 'agents_md' field in final response")?;
-
+    let raw: Value = initial_res.json().await?;
+    let agents_md_content = raw["agents_md"].as_str().context("Missing 'agents_md' field in response")?;
     parse_manifest(agents_md_content)
 }
 
