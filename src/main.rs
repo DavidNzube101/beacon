@@ -63,6 +63,8 @@ enum Commands {
         file: String,
         #[arg(long)]
         check_endpoints: bool,
+        #[arg(long)]
+        provider: Option<String>,
     },
     Serve {
         #[arg(short, long, default_value = "8080")]
@@ -83,11 +85,7 @@ struct GenerateResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     agents_md: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    capabilities: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    endpoints: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    repo_name: Option<String>,
+    manifest: Option<models::AgentsManifest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
@@ -107,6 +105,8 @@ struct ValidateResponse {
     errors: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     warnings: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    endpoint_results: Option<Vec<models::EndpointCheckResult>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
@@ -195,7 +195,7 @@ async fn rate_limit_middleware(
 async fn handle_generate(
     headers: HeaderMap,
     Json(req): Json<GenerateRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<GenerateResponse>)> {
+) -> Result<impl IntoResponse, errors::BeaconError> {
     let provider = req.provider.clone().unwrap_or_else(|| "gemini".to_string());
     let mut actual_provider = provider.clone();
     let mut rid_final = None;
@@ -208,14 +208,7 @@ async fn handle_generate(
         if let (Some(txn), Some(ch), Some(rid)) = (txn_hash, chain, run_id) {
             rid_final = Some(rid.to_string());
             if db::payment_already_used(txn).await.unwrap_or(false) {
-                return Err((StatusCode::CONFLICT, Json(GenerateResponse {
-                    success: false,
-                    agents_md: None,
-                    capabilities: None,
-                    endpoints: None,
-                    repo_name: None,
-                    error: Some("Transaction hash already used".to_string()),
-                })));
+                return Err(errors::BeaconError::TransactionAlreadyUsed);
             }
 
             let amount = std::env::var("PAYMENT_AMOUNT_USDC")
@@ -230,24 +223,13 @@ async fn handle_generate(
 
             let verified = verifier::verify_payment(ch, txn, amount, &wallet)
                 .await
-                .map_err(|e| (StatusCode::BAD_REQUEST, Json(GenerateResponse {
-                    success: false,
-                    agents_md: None,
-                    capabilities: None,
-                    endpoints: None,
-                    repo_name: None,
-                    error: Some(format!("Verification failed: {}", e)),
-                })))?;
+                .map_err(|e| errors::BeaconError::InferenceError(format!("Verification failed: {}", e)))?;
 
             if !verified {
-                return Err((StatusCode::PAYMENT_REQUIRED, Json(GenerateResponse {
-                    success: false,
-                    agents_md: None,
-                    capabilities: None,
-                    endpoints: None,
-                    repo_name: None,
-                    error: Some("Payment not verified".to_string()),
-                })));
+                return Err(errors::BeaconError::CloudError { 
+                    status: StatusCode::PAYMENT_REQUIRED.as_u16(), 
+                    message: "Payment not verified".to_string() 
+                });
             }
 
             db::mark_run_paid(rid, txn, ch).await.ok();
@@ -256,40 +238,18 @@ async fn handle_generate(
         } else {
             let rid = db::create_run(&req.repo_context.name)
                 .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(GenerateResponse {
-                    success: false,
-                    agents_md: None,
-                    capabilities: None,
-                    endpoints: None,
-                    repo_name: None,
-                    error: Some(e.to_string()),
-                })))?;
+                .map_err(|e| errors::BeaconError::DatabaseError(e.to_string()))?;
 
             let amount = std::env::var("PAYMENT_AMOUNT_USDC").unwrap_or_else(|_| "0.09".to_string());
             let w_base = std::env::var("BEACON_WALLET_BASE").unwrap_or_default();
             let w_sol = std::env::var("BEACON_WALLET_SOLANA").unwrap_or_default();
 
-            return Ok((
-                StatusCode::PAYMENT_REQUIRED,
-                [
-                    ("x-payment-amount", amount),
-                    ("x-payment-currency", "USDC".to_string()),
-                    ("x-payment-chain-base", "base".to_string()),
-                    ("x-payment-address-base", w_base),
-                    ("x-payment-chain-solana", "solana".to_string()),
-                    ("x-payment-address-solana", w_sol),
-                    ("x-payment-run-id", rid),
-                ],
-                Json(GenerateResponse {
-                    success: false,
-                    agents_md: None,
-                    capabilities: None,
-                    endpoints: None,
-                    repo_name: None,
-                    error: Some("Payment required".to_string()),
-                }),
-            )
-                .into_response());
+            return Err(errors::BeaconError::PaymentRequired {
+                run_id: rid,
+                amount,
+                base_addr: w_base,
+                sol_addr: w_sol,
+            });
         }
     }
 
@@ -297,40 +257,19 @@ async fn handle_generate(
         .await
         .map_err(|e| {
             tracing::error!("Inference failed: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(GenerateResponse {
-                success: false,
-                agents_md: None,
-                capabilities: None,
-                endpoints: None,
-                repo_name: None,
-                error: Some(e.to_string()),
-            }))
+            errors::BeaconError::InferenceError(e.to_string())
         })?;
 
     let tmp_path = format!("/tmp/beacon_{}.md", &req.repo_context.name);
     generator::generate_agents_md(&manifest, &tmp_path)
         .map_err(|e| {
             tracing::error!("File generation failed: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(GenerateResponse {
-                success: false,
-                agents_md: None,
-                capabilities: None,
-                endpoints: None,
-                repo_name: None,
-                error: Some(e.to_string()),
-            }))
+            errors::BeaconError::Unknown(format!("File generation failed: {}", e))
         })?;
     let content = std::fs::read_to_string(&tmp_path)
         .map_err(|e| {
             tracing::error!("Read generated file failed: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(GenerateResponse {
-                success: false,
-                agents_md: None,
-                capabilities: None,
-                endpoints: None,
-                repo_name: None,
-                error: Some(e.to_string()),
-            }))
+            errors::BeaconError::IoError(e)
         })?;
     let _ = std::fs::remove_file(&tmp_path);
 
@@ -342,19 +281,16 @@ async fn handle_generate(
 
     Ok(Json(GenerateResponse {
         success: true,
-        capabilities: Some(manifest.capabilities.len()),
-        endpoints: Some(manifest.endpoints.len()),
-        repo_name: Some(manifest.name.clone()),
         agents_md: Some(content),
+        manifest: Some(manifest),
         error: None,
-    })
-    .into_response())
+    }))
 }
 
 async fn handle_validate(
     headers: HeaderMap,
     Json(req): Json<ValidateRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ValidateResponse>)> {
+) -> Result<impl IntoResponse, errors::BeaconError> {
     let provider = req.provider.clone().unwrap_or_else(|| "none".to_string());
 
     if provider == "beacon-ai-cloud" {
@@ -364,13 +300,7 @@ async fn handle_validate(
 
         if let (Some(txn), Some(ch), Some(rid)) = (txn_hash, chain, run_id) {
             if db::payment_already_used(txn).await.unwrap_or(false) {
-                return Err((StatusCode::CONFLICT, Json(ValidateResponse {
-                    success: false,
-                    valid: None,
-                    errors: None,
-                    warnings: None,
-                    error: Some("Transaction hash already used".to_string()),
-                })));
+                return Err(errors::BeaconError::TransactionAlreadyUsed);
             }
 
             let amount = std::env::var("PAYMENT_AMOUNT_USDC")
@@ -385,22 +315,13 @@ async fn handle_validate(
 
             let verified = verifier::verify_payment(ch, txn, amount, &wallet)
                 .await
-                .map_err(|e| (StatusCode::BAD_REQUEST, Json(ValidateResponse {
-                    success: false,
-                    valid: None,
-                    errors: None,
-                    warnings: None,
-                    error: Some(format!("Verification failed: {}", e)),
-                })))?;
+                .map_err(|e| errors::BeaconError::ValidationError(format!("Verification failed: {}", e)))?;
 
             if !verified {
-                return Err((StatusCode::PAYMENT_REQUIRED, Json(ValidateResponse {
-                    success: false,
-                    valid: None,
-                    errors: None,
-                    warnings: None,
-                    error: Some("Payment not verified".to_string()),
-                })));
+                return Err(errors::BeaconError::CloudError { 
+                    status: StatusCode::PAYMENT_REQUIRED.as_u16(), 
+                    message: "Payment not verified".to_string() 
+                });
             }
 
             db::mark_run_paid(rid, txn, ch).await.ok();
@@ -408,51 +329,25 @@ async fn handle_validate(
         } else {
             let rid = db::create_run("validate-only")
                 .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ValidateResponse {
-                    success: false,
-                    valid: None,
-                    errors: None,
-                    warnings: None,
-                    error: Some(e.to_string()),
-                })))?;
+                .map_err(|e| errors::BeaconError::DatabaseError(e.to_string()))?;
 
             let amount = std::env::var("PAYMENT_AMOUNT_USDC").unwrap_or_else(|_| "0.09".to_string());
             let w_base = std::env::var("BEACON_WALLET_BASE").unwrap_or_default();
             let w_sol = std::env::var("BEACON_WALLET_SOLANA").unwrap_or_default();
 
-            return Ok((
-                StatusCode::PAYMENT_REQUIRED,
-                [
-                    ("x-payment-amount", amount),
-                    ("x-payment-currency", "USDC".to_string()),
-                    ("x-payment-chain-base", "base".to_string()),
-                    ("x-payment-address-base", w_base),
-                    ("x-payment-chain-solana", "solana".to_string()),
-                    ("x-payment-address-solana", w_sol),
-                    ("x-payment-run-id", rid),
-                ],
-                Json(ValidateResponse {
-                    success: false,
-                    valid: None,
-                    errors: None,
-                    warnings: None,
-                    error: Some("Payment required".to_string()),
-                }),
-            )
-                .into_response());
+            return Err(errors::BeaconError::PaymentRequired {
+                run_id: rid,
+                amount,
+                base_addr: w_base,
+                sol_addr: w_sol,
+            });
         }
     }
 
     let result = validator::validate_content(&req.content)
         .map_err(|e| {
             tracing::error!("Validation failed: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(ValidateResponse {
-                success: false,
-                valid: None,
-                errors: None,
-                warnings: None,
-                error: Some(e.to_string()),
-            }))
+            errors::BeaconError::ValidationError(e.to_string())
         })?;
 
     Ok(Json(ValidateResponse {
@@ -460,9 +355,9 @@ async fn handle_validate(
         valid: Some(result.valid),
         errors: Some(result.errors),
         warnings: Some(result.warnings),
+        endpoint_results: Some(result.endpoint_results),
         error: None,
-    })
-    .into_response())
+    }))
 }
 
 #[tokio::main]
@@ -492,11 +387,22 @@ async fn main() -> anyhow::Result<()> {
         Commands::Validate {
             file,
             check_endpoints,
+            provider,
         } => {
             println!("{} Beacon — validating {}...", random_emoji(), file);
             let content =
                 std::fs::read_to_string(&file).map_err(|_| anyhow::anyhow!("File not found: {}", file))?;
-            let mut result = validator::validate_content(&content)?;
+
+            let mut result = if let Some(p) = provider {
+                if p == "beacon-ai-cloud" {
+                    validator::validate_cloud(&content).await?
+                } else {
+                    validator::validate_content(&content)?
+                }
+            } else {
+                validator::validate_content(&content)?
+            };
+
             if check_endpoints {
                 println!("   🌐 Checking endpoint reachability...");
                 result.endpoint_results = validator::check_endpoints(&content).await?;

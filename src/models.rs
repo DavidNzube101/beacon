@@ -96,15 +96,16 @@ impl Language {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ValidationResult {
     pub valid: bool,
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
+    #[serde(default)]
     pub endpoint_results: Vec<EndpointCheckResult>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct EndpointCheckResult {
     pub endpoint: String,
     pub reachable: bool,

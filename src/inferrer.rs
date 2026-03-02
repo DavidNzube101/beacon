@@ -216,25 +216,27 @@ async fn call_beacon_cloud(ctx: &RepoContext, _prompt: &str) -> Result<AgentsMan
         if !final_res.status().is_success() {
             let status = final_res.status().as_u16();
             let raw: Value = final_res.json().await.unwrap_or(json!({"error": "Unknown error"}));
-            let message = raw["error"].as_str().unwrap_or("Unknown error").to_string();
+            let message = raw["error"].as_str().or(raw["error"]["message"].as_str()).unwrap_or("Unknown error").to_string();
             return Err(BeaconError::CloudError { status, message }.into());
         }
 
         let raw: Value = final_res.json().await.context("Failed to parse final response from Beacon Cloud")?;
-        let agents_md_content = raw["agents_md"].as_str().context("Missing 'agents_md' field in final response")?;
-        return parse_manifest(agents_md_content);
+        let manifest_val = raw["manifest"].clone();
+        let manifest: AgentsManifest = serde_json::from_value(manifest_val).context("Failed to deserialize AgentsManifest from server response")?;
+        return Ok(manifest);
     }
 
     if !initial_res.status().is_success() {
         let status = initial_res.status().as_u16();
         let raw: Value = initial_res.json().await.unwrap_or(json!({"error": "Unknown error"}));
-        let message = raw["error"].as_str().unwrap_or("Unknown error").to_string();
+        let message = raw["error"].as_str().or(raw["error"]["message"].as_str()).unwrap_or("Unknown error").to_string();
         return Err(BeaconError::CloudError { status, message }.into());
     }
 
     let raw: Value = initial_res.json().await?;
-    let agents_md_content = raw["agents_md"].as_str().context("Missing 'agents_md' field in response")?;
-    parse_manifest(agents_md_content)
+    let manifest_val = raw["manifest"].clone();
+    let manifest: AgentsManifest = serde_json::from_value(manifest_val).context("Failed to deserialize AgentsManifest from server response")?;
+    Ok(manifest)
 }
 
 /// resolving API key here, flow would be cli flag > env > error

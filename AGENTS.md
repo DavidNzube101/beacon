@@ -1,8 +1,8 @@
 # AGENTS.md — beacon
 
-> Beacon is a tool that makes any software repository agent-ready. It scans a codebase, infers agent-usable capabilities using AI (Gemini 2.5 Flash), and generates a standards-compliant AGENTS.md file. It also validates existing AGENTS.md files and provides a web API for these functionalities, allowing AI agents to programmatically discover and describe repository capabilities.
+> Beacon is a Rust-based tool that scans a codebase, infers its agent-usable capabilities using AI, and generates a standards-compliant AGENTS.md file, making the repository discoverable by autonomous agents. It can be used as a CLI tool or a web API.
 
-**Version:** 0.1.0
+**Version:** 0.2.2
 
 ---
 
@@ -10,7 +10,7 @@
 
 **Type:** `none`
 
-The Beacon API endpoints themselves do not require client authentication. However, the Beacon server requires a `GEMINI_API_KEY` environment variable to be set for its internal AI inference capabilities to function.
+The Beacon API endpoints themselves do not require direct client authentication. AI provider API keys (e.g., GEMINI_API_KEY) must be configured as environment variables on the server running the Beacon service. For 'beacon-ai-cloud', payment via USDC is handled internally.
 
 ---
 
@@ -20,20 +20,32 @@ What an agent can do with this repository:
 
 ### `generate_agents_md`
 
-Generate an AGENTS.md file for a given local repository path by scanning its codebase and inferring agent-usable capabilities, endpoints, and schemas using an AI model.
+Scans a repository (local path or GitHub URL) and generates an AGENTS.md file describing its agent-usable capabilities, endpoints, and authentication. It uses various AI providers (Gemini, Claude, OpenAI, Beacon Cloud) for inference.
 
 **Input:**
 
 ```json
 {
   "properties": {
-    "repo_url": {
-      "description": "The local file path to the repository to be analyzed. This path must be accessible by the Beacon server.",
+    "api_key": {
+      "description": "API key for the chosen AI provider, if not set via environment variable.",
+      "type": "string"
+    },
+    "output": {
+      "description": "The path where the AGENTS.md file should be written (default: AGENTS.md).",
+      "type": "string"
+    },
+    "provider": {
+      "description": "The AI provider to use for inference (e.g., 'gemini', 'claude', 'openai', 'beacon-ai-cloud'). Defaults to 'gemini'.",
+      "type": "string"
+    },
+    "target": {
+      "description": "The path to the local repository or a GitHub URL.",
       "type": "string"
     }
   },
   "required": [
-    "repo_url"
+    "target"
   ],
   "type": "object"
 }
@@ -43,59 +55,32 @@ Generate an AGENTS.md file for a given local repository path by scanning its cod
 
 ```json
 {
-  "properties": {
-    "agents_md": {
-      "description": "The content of the generated AGENTS.md file.",
-      "type": "string"
-    },
-    "capabilities": {
-      "description": "The number of capabilities inferred and included in the AGENTS.md.",
-      "type": "integer"
-    },
-    "endpoints": {
-      "description": "The number of endpoints inferred and included in the AGENTS.md.",
-      "type": "integer"
-    },
-    "repo_name": {
-      "description": "The name of the repository that was analyzed.",
-      "type": "string"
-    },
-    "success": {
-      "description": "Indicates if the AGENTS.md generation was successful.",
-      "type": "boolean"
-    }
-  },
-  "required": [
-    "success",
-    "agents_md",
-    "capabilities",
-    "endpoints",
-    "repo_name"
-  ],
-  "type": "object"
+  "description": "Path to the generated AGENTS.md file.",
+  "type": "string"
 }
 ```
 
 **Examples:**
 
-- curl -X POST -H "Content-Type: application/json" -d '{"repo_url": "/path/to/my-local-project"}' http://localhost:8080/generate
+- beacon generate ./my-project
+- beacon generate https://github.com/user/repo --provider openai --api-key sk-...
 
 ### `validate_agents_md`
 
-Validate the content of an AGENTS.md file against the AGENTS.md standard, checking for required sections and formatting.
+Validates the structure and content of an AGENTS.md file against the expected schema.
 
 **Input:**
 
 ```json
 {
   "properties": {
-    "content": {
-      "description": "The full content of the AGENTS.md file as a string to be validated.",
+    "file": {
+      "description": "The path to the AGENTS.md file to validate.",
       "type": "string"
     }
   },
   "required": [
-    "content"
+    "file"
   ],
   "type": "object"
 }
@@ -107,36 +92,91 @@ Validate the content of an AGENTS.md file against the AGENTS.md standard, checki
 {
   "properties": {
     "errors": {
-      "description": "A list of validation errors found in the AGENTS.md content.",
+      "description": "A list of validation errors, if any.",
       "items": {
         "type": "string"
       },
       "type": "array"
     },
-    "valid": {
-      "description": "True if the AGENTS.md content is valid, false otherwise.",
+    "is_valid": {
+      "description": "True if the AGENTS.md is valid, false otherwise.",
       "type": "boolean"
-    },
-    "warnings": {
-      "description": "A list of validation warnings found in the AGENTS.md content.",
-      "items": {
-        "type": "string"
-      },
-      "type": "array"
     }
   },
-  "required": [
-    "valid",
-    "errors",
-    "warnings"
-  ],
   "type": "object"
 }
 ```
 
 **Examples:**
 
-- curl -X POST -H "Content-Type: application/json" -d '{"content": "# AGENTS.md\n> My project description.\n## Capabilities\n### `my_function`\nDoes something."}' http://localhost:8080/validate
+- beacon validate ./AGENTS.md
+
+### `validate_agents_md_with_endpoint_check`
+
+Validates an AGENTS.md file and additionally checks the reachability of any declared endpoints within it.
+
+**Input:**
+
+```json
+{
+  "properties": {
+    "file": {
+      "description": "The path to the AGENTS.md file to validate.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "file"
+  ],
+  "type": "object"
+}
+```
+
+**Output:**
+
+```json
+{
+  "properties": {
+    "endpoint_checks": {
+      "description": "Results of endpoint reachability checks.",
+      "items": {
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "errors": {
+      "description": "A list of validation and endpoint check errors, if any.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "is_valid": {
+      "description": "True if the AGENTS.md is valid and endpoints are reachable, false otherwise.",
+      "type": "boolean"
+    }
+  },
+  "type": "object"
+}
+```
+
+**Examples:**
+
+- beacon validate ./AGENTS.md --check-endpoints
 
 ---
 
@@ -144,23 +184,32 @@ Validate the content of an AGENTS.md file against the AGENTS.md standard, checki
 
 ### `GET /health`
 
-Checks the health and availability of the Beacon API server.
+Checks the health status of the Beacon API server.
 
 ### `POST /generate`
 
-Initiates the generation of an AGENTS.md file for a specified local repository path.
+Triggers the generation of an AGENTS.md file for a specified repository. The AI provider API key must be configured on the server via environment variables (e.g., GEMINI_API_KEY).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `repo_url` | `string` | ✅ | The local file path to the repository to be analyzed. This path must be accessible by the Beacon server. |
+| `repo_url` | `string` | ✅ | The URL or local path to the repository to be scanned. |
 
 ### `POST /validate`
 
-Validates the provided content of an AGENTS.md file against the AGENTS.md standard.
+Validates the content of an AGENTS.md file string. If using 'beacon-ai-cloud' provider, payment might be required.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `content` | `string` | ✅ | The full content of the AGENTS.md file as a string to be validated. |
+| `content` | `string` | ✅ | The full content of the AGENTS.md file as a string. |
+| `provider` | `string` | ❌ | The AI provider to use for validation (e.g., 'beacon-ai-cloud'). |
+
+---
+
+## Rate Limits
+
+- **Per minute:** 20
+
+Applies to the Beacon API server endpoints.
 
 ---
 
