@@ -22,6 +22,7 @@ use axum::{
 use clap::{Parser, Subcommand};
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{net::SocketAddr, sync::Arc, time::SystemTime};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -252,13 +253,22 @@ async fn handle_generate(
 
     let manifest = inferrer::infer_capabilities(&req.repo_context, &actual_provider, None)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!("Inference failed: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, json!({"success": false, "error": e.to_string()}).to_string())
+        })?;
 
     let tmp_path = format!("/tmp/beacon_{}.md", &req.repo_context.name);
     generator::generate_agents_md(&manifest, &tmp_path)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!("File generation failed: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, json!({"success": false, "error": e.to_string()}).to_string())
+        })?;
     let content = std::fs::read_to_string(&tmp_path)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!("Read generated file failed: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, json!({"success": false, "error": e.to_string()}).to_string())
+        })?;
     let _ = std::fs::remove_file(&tmp_path);
 
     if provider == "beacon-ai-cloud" {
@@ -290,7 +300,7 @@ async fn handle_validate(
 
         if let (Some(txn), Some(ch), Some(rid)) = (txn_hash, chain, run_id) {
             if db::payment_already_used(txn).await.unwrap_or(false) {
-                return Err((StatusCode::CONFLICT, "Transaction hash already used".to_string()));
+                return Err((StatusCode::CONFLICT, json!({"success": false, "error": "Transaction hash already used"}).to_string()));
             }
 
             let amount = std::env::var("PAYMENT_AMOUNT_USDC")
@@ -305,10 +315,10 @@ async fn handle_validate(
 
             let verified = verifier::verify_payment(ch, txn, amount, &wallet)
                 .await
-                .map_err(|e| (StatusCode::BAD_REQUEST, format!("Verification failed: {}", e)))?;
+                .map_err(|e| (StatusCode::BAD_REQUEST, json!({"success": false, "error": format!("Verification failed: {}", e)}).to_string()))?;
 
             if !verified {
-                return Err((StatusCode::PAYMENT_REQUIRED, "Payment not verified".to_string()));
+                return Err((StatusCode::PAYMENT_REQUIRED, json!({"success": false, "error": "Payment not verified"}).to_string()));
             }
 
             db::mark_run_paid(rid, txn, ch).await.ok();
@@ -316,7 +326,7 @@ async fn handle_validate(
         } else {
             let rid = db::create_run("validate-only")
                 .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, json!({"success": false, "error": e.to_string()}).to_string()))?;
 
             let amount = std::env::var("PAYMENT_AMOUNT_USDC").unwrap_or_else(|_| "0.09".to_string());
             let w_base = std::env::var("BEACON_WALLET_BASE").unwrap_or_default();
@@ -333,14 +343,17 @@ async fn handle_validate(
                     ("x-payment-address-solana", w_sol),
                     ("x-payment-run-id", rid),
                 ],
-                "Payment required",
+                json!({"success": false, "error": "Payment required"}).to_string(),
             )
                 .into_response());
         }
     }
 
     let result = validator::validate_content(&req.content)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!("Validation failed: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, json!({"success": false, "error": e.to_string()}).to_string())
+        })?;
 
     Ok(Json(ValidateResponse {
         valid: result.valid,
