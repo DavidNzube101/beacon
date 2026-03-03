@@ -1,7 +1,7 @@
 [package]
 name = "beacon"
 
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 
 [[bin]]
@@ -25,9 +25,14 @@ walkdir = "2"
 postgrest = "1"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
-ethers = { version = "2.0.14", default-features = false, features = ["rustls"] }
+ethers-core = { version = "2.0.14" }
+ethers-contract = { version = "2.0.14", features = ["abigen"] }
+ethers-providers = { version = "2.0.14", features = ["rustls"] }
+ethers-signers = { version = "2.0.14" }
+ethers-middleware = { version = "2.0.14" }
 redis = { version = "0.25", features = ["tokio-comp"] }
 rand = "0.8"
+hex = "0.4"
 once_cell = "1.19"
 
 [dev-dependencies]

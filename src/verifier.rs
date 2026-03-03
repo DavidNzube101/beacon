@@ -1,5 +1,6 @@
 use anyhow::{Result, Context};
-use ethers::prelude::*;
+use ethers_core::types::{Address, H256, U256};
+use ethers_providers::{Provider, Http, Middleware};
 use std::str::FromStr;
 use serde_json::json;
 

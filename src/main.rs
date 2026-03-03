@@ -7,6 +7,7 @@ mod validator;
 mod models;
 mod verifier;
 mod errors;
+mod identity;
 
 mod tests;
 mod db;
@@ -69,6 +70,14 @@ enum Commands {
     Serve {
         #[arg(short, long, default_value = "8080")]
         port: u16,
+    },
+    Register {
+        #[arg(default_value = "./")]
+        repo_path: String,
+        #[arg(long, default_value = "base")]
+        chain: String,
+        #[arg(long)]
+        agency: Option<String>,
     },
 }
 
@@ -461,6 +470,11 @@ async fn main() -> anyhow::Result<()> {
             let listener = tokio::net::TcpListener::bind(addr).await?;
             axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
                 .await?;
+        }
+        Commands::Register { repo_path, chain, agency } => {
+            println!("{} Registering on-chain agent identity...", random_emoji());
+            identity::register_agent_identity(&repo_path, &chain, agency.as_deref()).await?;
+            println!("\n✅ Done! Agent identity registered.");
         }
     }
     Ok(())

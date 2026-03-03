@@ -7,6 +7,7 @@ pub struct AgentsManifest {
     pub name: String,
     pub description: String,
     pub version: Option<String>,
+    pub agent_identity: Option<String>,
     #[serde(default)]
     pub capabilities: Vec<Capability>,
     #[serde(default)]
