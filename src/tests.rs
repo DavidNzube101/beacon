@@ -12,6 +12,7 @@ mod tests {
             name: "test-repo".to_string(),
             description: "A test repository for agents.".to_string(),
             version: Some("1.0.0".to_string()),
+            agent_identity: None,
             capabilities: vec![
                 Capability {
                     name: "do_something".to_string(),
