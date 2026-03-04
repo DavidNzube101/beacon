@@ -271,7 +271,7 @@ mod mcp_tests {
                         icons: vec![],
                         website_url: None,
                     },
-                    protocol_version: "2024-11-05".into(),
+                    protocol_version: "2025-11-25".into(),
                     capabilities: ServerCapabilities {
                         tools: None,
                         resources: None,

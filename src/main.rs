@@ -459,7 +459,7 @@ async fn main() -> AnyResult<()> {
                 },
                 instructions: None,
                 meta: None,
-                protocol_version: Default::default(),
+                protocol_version: "2025-11-25".into(),
             };
 
             let mcp_handler = mcp::BeaconMcpHandler::default();
