@@ -119,6 +119,7 @@ enum Commands {
         #[arg(long)]
         agency: Option<String>,
     },
+    Upgrade,
 }
 
 #[derive(Deserialize)]
@@ -493,6 +494,17 @@ async fn main() -> AnyResult<()> {
             let _chain = chain;
             identity::register_agent_identity(&repo_path, &_chain, agency.as_deref()).await?;
             println!("\n✅ Done! Agent identity registered.");
+        }
+        Commands::Upgrade => {
+            println!("{} Upgrading Beacon CLI...", random_emoji());
+            let status = std::process::Command::new("sh")
+                .arg("-c")
+                .arg("curl -fsSL https://raw.githubusercontent.com/DavidNzube101/beacon/master/install.sh | sh")
+                .status()?;
+            
+            if !status.success() {
+                anyhow::bail!("Upgrade failed with status: {}", status);
+            }
         }
     }
     Ok(())
