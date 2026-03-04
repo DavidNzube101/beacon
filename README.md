@@ -60,6 +60,7 @@ beacon serve --port 8080
 | `register` | Mints an ERC-7527 identity NFT for the repo on Base. |
 | `validate` | Checks an AGENTS.md for standards compliance. |
 | `serve` | Starts a dual-protocol (REST + MCP) server. |
+| `upgrade` | Automatically upgrades Beacon CLI to the latest version. |
 
 ### Advanced Registration
 Beacon uses a linear bonding curve for registration. Early adopters secure their repository's on-chain provenance at a lower premium.
@@ -72,6 +73,7 @@ beacon register ./ --chain base
 |---|---|---|
 | Gemini 2.5 Flash | `gemini` (default) | `GEMINI_API_KEY` |
 | Claude | `claude` | `CLAUDE_API_KEY` |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` |
 | Beacon Cloud | `beacon-ai-cloud` | none — $0.09/run via USDC |
 
 ---
