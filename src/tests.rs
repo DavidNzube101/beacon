@@ -206,18 +206,13 @@ mod db_tests {
 
 #[cfg(test)]
 mod api_tests {
-    use crate::{AppState, rate_limit_middleware};
-    use axum::{routing::get, Router, middleware, http::{HeaderName, HeaderValue}};
-    use axum_test::TestServer;
+    use crate::{AppState, check_rate_limit};
+    use axum::http::StatusCode;
     use std::sync::Arc;
-
-    async fn mock_handler() -> &'static str {
-        "ok"
-    }
 
     #[tokio::test]
     #[ignore]
-    async fn test_rate_limiter_enforces_limit() {
+    async fn test_check_rate_limit_enforces_limit() {
         dotenvy::dotenv().ok();
         let redis_url = match std::env::var("REDIS_URL") {
             Ok(url) => url,
@@ -228,30 +223,88 @@ mod api_tests {
             redis_client: Arc::new(redis::Client::open(redis_url).unwrap()),
         };
 
-        let app = Router::new()
-            .route("/generate", get(mock_handler))
-            .layer(middleware::from_fn_with_state(state.clone(), rate_limit_middleware))
-            .with_state(state);
-
-        let server = TestServer::new(app).unwrap();
-
-        let header_name = HeaderName::from_static("x-forwarded-for");
-        let header_value = HeaderValue::from_static("1.2.3.4");
-
-
-
         for _ in 0..20 {
-            let response = server.get("/generate")
-                .add_header(header_name.clone(), header_value.clone())
-                .await;
-            assert_ne!(response.status_code(), 429);
+            let result = check_rate_limit(&state, "1.2.3.4").await;
+            assert!(result.is_ok());
         }
 
-        
-        
-        let response = server.get("/generate")
-            .add_header(header_name, header_value)
-            .await;
-        assert_eq!(response.status_code(), 429);
+        let result = check_rate_limit(&state, "1.2.3.4").await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), StatusCode::TOO_MANY_REQUESTS);
+    }
+}
+
+#[cfg(test)]
+mod mcp_tests {
+    use crate::mcp::BeaconMcpHandler;
+    use rust_mcp_sdk::mcp_server::ServerHandler;
+    use rust_mcp_sdk::McpServer;
+    use rust_mcp_sdk::task_store::TaskStore;
+    use rust_mcp_sdk::schema::{InitializeResult, Implementation, ServerCapabilities};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    #[tokio::test]
+    async fn test_mcp_lists_tools() {
+        let handler = BeaconMcpHandler::default();
+        let result = handler.handle_list_tools_request(None, Arc::new(MockMcpServer::new())).await;
+        assert!(result.is_ok());
+        let tools = result.unwrap().tools;
+        assert!(tools.iter().any(|t| t.name == "generate_agents_md"));
+        assert!(tools.iter().any(|t| t.name == "validate_agents_md"));
+    }
+
+    struct MockMcpServer {
+        info: InitializeResult,
+        auth: RwLock<Option<rust_mcp_sdk::auth::AuthInfo>>,
+    }
+
+    impl MockMcpServer {
+        fn new() -> Self {
+            Self {
+                info: InitializeResult {
+                    server_info: Implementation {
+                        name: "mock".into(),
+                        version: "0.1".into(),
+                        title: None,
+                        description: None,
+                        icons: vec![],
+                        website_url: None,
+                    },
+                    protocol_version: "2024-11-05".into(),
+                    capabilities: ServerCapabilities {
+                        tools: None,
+                        resources: None,
+                        prompts: None,
+                        logging: None,
+                        completions: None,
+                        tasks: None,
+                        experimental: None,
+                    },
+                    instructions: None,
+                    meta: None,
+                },
+                auth: RwLock::new(None),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl McpServer for MockMcpServer {
+        async fn start(self: Arc<Self>) -> std::result::Result<(), rust_mcp_sdk::error::McpSdkError> { Ok(()) }
+        async fn set_client_details(&self, _: rust_mcp_sdk::schema::InitializeRequestParams) -> std::result::Result<(), rust_mcp_sdk::error::McpSdkError> { Ok(()) }
+        fn server_info(&self) -> &InitializeResult { &self.info }
+        fn client_info(&self) -> Option<rust_mcp_sdk::schema::InitializeRequestParams> { None }
+        async fn auth_info(&self) -> tokio::sync::RwLockReadGuard<'_, Option<rust_mcp_sdk::auth::AuthInfo>> { self.auth.read().await }
+        async fn auth_info_cloned(&self) -> Option<rust_mcp_sdk::auth::AuthInfo> { None }
+        async fn update_auth_info(&self, _: Option<rust_mcp_sdk::auth::AuthInfo>) {}
+        async fn wait_for_initialization(&self) {}
+        fn task_store(&self) -> Option<Arc<dyn TaskStore<rust_mcp_sdk::schema::ClientJsonrpcRequest, rust_mcp_sdk::schema::ResultFromServer>>> { None }
+        fn client_task_store(&self) -> Option<Arc<dyn TaskStore<rust_mcp_sdk::schema::ServerJsonrpcRequest, rust_mcp_sdk::schema::ResultFromClient>>> { None }
+        async fn stderr_message(&self, _: String) -> std::result::Result<(), rust_mcp_sdk::error::McpSdkError> { Ok(()) }
+        fn session_id(&self) -> Option<String> { None }
+        fn capabilities(&self) -> &ServerCapabilities { &self.info.capabilities }
+        async fn send(&self, _: rust_mcp_sdk::schema::MessageFromServer, _: Option<rust_mcp_sdk::schema::RequestId>, _: Option<std::time::Duration>) -> std::result::Result<Option<rust_mcp_sdk::schema::ClientMessage>, rust_mcp_sdk::error::McpSdkError> { Ok(None) }
+        async fn send_batch(&self, _: Vec<rust_mcp_sdk::schema::ServerMessage>, _: Option<std::time::Duration>) -> std::result::Result<Option<Vec<rust_mcp_sdk::schema::ClientMessage>>, rust_mcp_sdk::error::McpSdkError> { Ok(None) }
     }
 }

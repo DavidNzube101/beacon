@@ -8,23 +8,28 @@ mod models;
 mod verifier;
 mod errors;
 mod identity;
+mod mcp;
 
 mod tests;
 mod db;
 
-use anyhow::Context;
+use anyhow::{Result as AnyResult, Context};
 use axum::{
-    extract::{ConnectInfo, State},
-    http::{HeaderMap, Request, StatusCode},
-    middleware::{self, Next},
-    response::{IntoResponse, Response},
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
     routing::{get, post},
-    Json, Router,
+    Json,
+};
+use rust_mcp_sdk::{
+    mcp_server::{hyper_server, HyperServerOptions, ToMcpServerHandler},
+    schema::*,
 };
 use clap::{Parser, Subcommand};
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, sync::Arc, time::SystemTime};
+use std::{sync::Arc, time::SystemTime};
+use std::result::Result as StdResult;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -38,6 +43,41 @@ const RATE_LIMIT_MAX_REQUESTS: usize = 20;
 
 fn random_emoji() -> &'static str {
     ["⬛", "⬜"].choose(&mut rand::thread_rng()).unwrap_or(&"⬛")
+}
+
+async fn check_rate_limit(state: &AppState, ip: &str) -> StdResult<(), StatusCode> {
+    let key = format!("ratelimit:{}", ip);
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let mut conn = state.redis_client
+        .get_multiplexed_async_connection().await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let results: StdResult<Vec<redis::Value>, _> = redis::pipe()
+        .atomic()
+        .zrembyscore(&key, 0, (now - RATE_LIMIT_WINDOW_SECONDS) as f64)
+        .zadd(&key, now, now)
+        .zcard(&key)
+        .expire(&key, RATE_LIMIT_WINDOW_SECONDS as i64)
+        .query_async(&mut conn)
+        .await;
+
+    let results = results.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let count: usize = if results.len() >= 3 {
+        match &results[2] {
+            redis::Value::Int(c) => *c as usize,
+            _ => 0,
+        }
+    } else { 0 };
+
+    if count > RATE_LIMIT_MAX_REQUESTS {
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
+    Ok(())
 }
 
 #[derive(Parser)]
@@ -135,76 +175,19 @@ async fn health() -> Json<HealthResponse> {
     })
 }
 
-async fn rate_limit_middleware(
-    State(state): State<AppState>,
-    addr: Option<ConnectInfo<SocketAddr>>,
-    request: Request<axum::body::Body>,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    if request.uri().path() != "/generate" && request.uri().path() != "/validate" {
-        return Ok(next.run(request).await);
-    }
-    
-    let ip = match addr {
-        Some(ConnectInfo(a)) => a.ip().to_string(),
-        None => {
-            // fallback for things like tests/proxies
-            request.headers()
-                .get("x-forwarded-for")
-                .and_then(|h| h.to_str().ok())
-                .unwrap_or("unknown")
-                .to_string()
-        }
-    };
-    
-    let key = format!("ratelimit:{}", ip);
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-
-    let mut conn = state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|e| {
-            tracing::error!("Redis connection error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-    let results: Vec<redis::Value> = redis::pipe()
-        .atomic()
-        .zrembyscore(&key, 0, (now - RATE_LIMIT_WINDOW_SECONDS) as f64)
-        .zadd(&key, now, now)
-        .zcard(&key)
-        .expire(&key, RATE_LIMIT_WINDOW_SECONDS as i64)
-        .query_async(&mut conn)
-        .await
-        .map_err(|e| {
-            tracing::error!("Redis pipeline error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-    let count: usize = if results.len() >= 3 {
-        match &results[2] {
-            redis::Value::Int(c) => *c as usize,
-            _ => 0,
-        }
-    } else {
-        0
-    };
-
-    if count > RATE_LIMIT_MAX_REQUESTS {
-        return Err(StatusCode::TOO_MANY_REQUESTS);
-    }
-    
-    Ok(next.run(request).await)
-}
-
 async fn handle_generate(
+    State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<GenerateRequest>,
-) -> Result<impl IntoResponse, errors::BeaconError> {
+) -> StdResult<impl IntoResponse, errors::BeaconError> {
+    let ip = headers.get("x-forwarded-for")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
+    if let Err(status) = check_rate_limit(&state, &ip).await {
+        return Ok(status.into_response());
+    }
+
     let provider = req.provider.clone().unwrap_or_else(|| "gemini".to_string());
     let mut actual_provider = provider.clone();
     let mut rid_final = None;
@@ -293,13 +276,22 @@ async fn handle_generate(
         agents_md: Some(content),
         manifest: Some(manifest),
         error: None,
-    }))
+    }).into_response())
 }
 
 async fn handle_validate(
+    State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<ValidateRequest>,
-) -> Result<impl IntoResponse, errors::BeaconError> {
+) -> StdResult<impl IntoResponse, errors::BeaconError> {
+    let ip = headers.get("x-forwarded-for")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
+    if let Err(status) = check_rate_limit(&state, &ip).await {
+        return Ok(status.into_response());
+    }
+
     let provider = req.provider.clone().unwrap_or_else(|| "none".to_string());
 
     if provider == "beacon-ai-cloud" {
@@ -366,11 +358,11 @@ async fn handle_validate(
         warnings: Some(result.warnings),
         endpoint_results: Some(result.endpoint_results),
         error: None,
-    }))
+    }).into_response())
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> AnyResult<()> {
     tracing_subscriber::fmt::init();
     dotenvy::dotenv().ok();
 
@@ -451,29 +443,55 @@ async fn main() -> anyhow::Result<()> {
                 redis_client: Arc::new(redis::Client::open(redis_url)?),
             };
             
-            let app = Router::new()
-                .route("/health", get(health))
-                .route("/validate", post(handle_validate))
-                .route("/generate", post(handle_generate))
-                .layer(middleware::from_fn_with_state(
-                    state.clone(),
-                    rate_limit_middleware,
-                ))
-                .with_state(state);
+            let server_info = InitializeResult {
+                server_info: Implementation {
+                    name: "beacon-mcp".into(),
+                    version: VERSION.into(),
+                    title: Some("Beacon MCP Server".into()),
+                    description: Some("Make any repo agent-ready. Instantly.".into()),
+                    icons: vec![],
+                    website_url: Some("https://beacon.davidnzube.xyz".into()),
+                },
+                capabilities: ServerCapabilities {
+                    tools: Some(ServerCapabilitiesTools { list_changed: Some(false) }),
+                    ..Default::default()
+                },
+                instructions: None,
+                meta: None,
+                protocol_version: Default::default(),
+            };
 
-            let addr = SocketAddr::from(([0, 0, 0, 0], port));
-            println!("{} Beacon API", random_emoji());
+            let mcp_handler = mcp::BeaconMcpHandler::default();
+
+            let server = hyper_server::create_server(
+                server_info,
+                mcp_handler.to_mcp_server_handler(),
+                HyperServerOptions {
+                    host: "0.0.0.0".to_string(),
+                    port,
+                    sse_support: true,
+                    ..Default::default()
+                },
+            );
+
+            let server = server
+                .with_route("/health", get(health))
+                .with_route("/validate", post(handle_validate).with_state(state.clone()))
+                .with_route("/generate", post(handle_generate).with_state(state));
+
+            println!("{} Beacon API & MCP Server", random_emoji());
             println!("   http://0.0.0.0:{}", port);
             println!("   POST /generate  — generate AGENTS.md from a repo path");
             println!("   POST /validate  — validate an AGENTS.md file");
+            println!("   GET  /sse       — MCP Server (SSE)");
             println!("   GET  /health    — health check");
-            let listener = tokio::net::TcpListener::bind(addr).await?;
-            axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-                .await?;
+
+            server.start().await.map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         Commands::Register { repo_path, chain, agency } => {
             println!("{} Registering on-chain agent identity...", random_emoji());
-            identity::register_agent_identity(&repo_path, &chain, agency.as_deref()).await?;
+            let _chain = chain;
+            identity::register_agent_identity(&repo_path, &_chain, agency.as_deref()).await?;
             println!("\n✅ Done! Agent identity registered.");
         }
     }
