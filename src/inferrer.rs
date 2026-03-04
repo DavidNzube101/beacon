@@ -21,6 +21,8 @@ const CLAUDE_URL: &str =
     "https://api.anthropic.com/v1/messages";
 const OPENAI_URL: &str =
     "https://api.openai.com/v1/chat/completions";
+const DEEPSEEK_URL: &str =
+    "https://api.deepseek.com/chat/completions";
 
 pub async fn infer_capabilities(
     ctx: &RepoContext,
@@ -44,11 +46,15 @@ pub async fn infer_capabilities(
             let key = resolve_key(api_key, "OPENAI_API_KEY", "openai")?;
             call_openai(&prompt, &key).await?
         }
+        "deepseek" => {
+            let key = resolve_key(api_key, "DEEPSEEK_API_KEY", "deepseek")?;
+            call_deepseek(&prompt, &key).await?
+        }
         "beacon-ai-cloud" => {
             call_beacon_cloud(ctx, &prompt).await?
         }
         other => anyhow::bail!(
-            "Unknown provider '{}'. Valid options: gemini, claude, openai, beacon-ai-cloud",
+            "Unknown provider '{}'. Valid options: gemini, claude, openai, deepseek, beacon-ai-cloud",
             other
         ),
     };
@@ -145,6 +151,39 @@ async fn call_openai(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
     let text = raw["choices"][0]["message"]["content"]
         .as_str()
         .context("Unexpected OpenAI response shape")?;
+
+    parse_manifest(text)
+}
+
+async fn call_deepseek(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
+    let response = CLIENT
+        .post(DEEPSEEK_URL)
+        .bearer_auth(api_key)
+        .json(&json!({
+            "model": "deepseek-chat",
+            "temperature": 0.2,
+            "response_format": { "type": "json_object" },
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are an expert at analyzing software repositories. Always respond with valid JSON only."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        }))
+        .send()
+        .await
+        .context("Failed to reach DeepSeek API")?;
+
+    check_status(&response, "DeepSeek")?;
+
+    let raw: Value = response.json().await?;
+    let text = raw["choices"][0]["message"]["content"]
+        .as_str()
+        .context("Unexpected DeepSeek response shape")?;
 
     parse_manifest(text)
 }
