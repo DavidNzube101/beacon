@@ -127,6 +127,7 @@ struct GenerateRequest {
     #[serde(flatten)]
     repo_context: models::RepoContext,
     provider: Option<String>,
+    api_key: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -144,6 +145,7 @@ struct GenerateResponse {
 struct ValidateRequest {
     content: String,
     provider: Option<String>,
+    api_key: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -193,7 +195,9 @@ async fn handle_generate(
     let mut actual_provider = provider.clone();
     let mut rid_final = None;
 
-    if provider == "beacon-ai-cloud" {
+    let is_cloud_request = req.api_key.is_none();
+
+    if is_cloud_request {
         let txn_hash = headers.get("x-payment-txn-hash").and_then(|h| h.to_str().ok());
         let chain = headers.get("x-payment-chain").and_then(|h| h.to_str().ok());
         let run_id = headers.get("x-payment-run-id").and_then(|h| h.to_str().ok());
@@ -246,7 +250,7 @@ async fn handle_generate(
         }
     }
 
-    let manifest = inferrer::infer_capabilities(&req.repo_context, &actual_provider, None)
+    let manifest = inferrer::infer_capabilities(&req.repo_context, &actual_provider, req.api_key.as_deref())
         .await
         .map_err(|e| {
             tracing::error!("Inference failed: {}", e);
@@ -266,7 +270,7 @@ async fn handle_generate(
         })?;
     let _ = std::fs::remove_file(&tmp_path);
 
-    if provider == "beacon-ai-cloud" {
+    if is_cloud_request {
         if let Some(rid) = rid_final {
             db::mark_run_complete(&rid, &content).await.ok();
         }
@@ -293,9 +297,9 @@ async fn handle_validate(
         return Ok(status.into_response());
     }
 
-    let provider = req.provider.clone().unwrap_or_else(|| "none".to_string());
+    let is_cloud_request = req.api_key.is_none();
 
-    if provider == "beacon-ai-cloud" {
+    if is_cloud_request {
         let txn_hash = headers.get("x-payment-txn-hash").and_then(|h| h.to_str().ok());
         let chain = headers.get("x-payment-chain").and_then(|h| h.to_str().ok());
         let run_id = headers.get("x-payment-run-id").and_then(|h| h.to_str().ok());

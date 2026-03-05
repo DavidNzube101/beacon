@@ -5,7 +5,7 @@ use rust_mcp_sdk::{
     mcp_server::ServerHandler,
     schema::*,
 };
-use crate::{inferrer, scanner, generator, validator};
+use crate::{inferrer, scanner, generator, validator, db, verifier};
 use std::sync::Arc;
 
 fn cte(msg: impl std::fmt::Display) -> CallToolError {
@@ -21,6 +21,10 @@ fn cte(msg: impl std::fmt::Display) -> CallToolError {
 pub struct GenerateTool {
     pub path: String,
     pub provider: Option<String>,
+    pub api_key: Option<String>,
+    pub run_id: Option<String>,
+    pub txn_hash: Option<String>,
+    pub chain: Option<String>,
 }
 
 #[macros::mcp_tool(
@@ -30,6 +34,10 @@ pub struct GenerateTool {
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, macros::JsonSchema)]
 pub struct ValidateTool {
     pub content: String,
+    pub api_key: Option<String>,
+    pub run_id: Option<String>,
+    pub txn_hash: Option<String>,
+    pub chain: Option<String>,
 }
 
 #[derive(Default)]
@@ -59,9 +67,35 @@ impl ServerHandler for BeaconMcpHandler {
                 let args: GenerateTool = serde_json::from_value(serde_json::Value::Object(params.arguments.unwrap_or_default()))
                     .map_err(cte)?;
                 
+                let is_cloud = args.api_key.is_none();
+                
+                if is_cloud {
+                    if let (Some(rid), Some(txn), Some(ch)) = (args.run_id, args.txn_hash, args.chain) {
+                        let amount = std::env::var("PAYMENT_AMOUNT_USDC").unwrap_or_else(|_| "0.09".to_string()).parse::<f64>().unwrap_or(0.09);
+                        let wallet = if ch == "base" { std::env::var("BEACON_WALLET_BASE").unwrap_or_default() } else { std::env::var("BEACON_WALLET_SOLANA").unwrap_or_default() };
+                        
+                        let verified = verifier::verify_payment(&ch, &txn, amount, &wallet).await.map_err(cte)?;
+                        if !verified { return Ok(CallToolResult::text_content(vec!["Payment verification failed. Please try again.".into()])); }
+                        
+                        db::mark_run_paid(&rid, &txn, &ch).await.ok();
+                    } else {
+                        let ctx = scanner::scan_local(&args.path).map_err(cte)?;
+                        let rid = db::create_run(&ctx.name).await.map_err(cte)?;
+                        let amount = std::env::var("PAYMENT_AMOUNT_USDC").unwrap_or_else(|_| "0.09".to_string());
+                        let w_base = std::env::var("BEACON_WALLET_BASE").unwrap_or_default();
+                        let w_sol = std::env::var("BEACON_WALLET_SOLANA").unwrap_or_default();
+                        
+                        let instructions = format!(
+                            "💰 Beacon Cloud Payment Required\n\nRun ID: {}\nAmount: {} USDC\n\nAddresses:\n- Base: {}\n- Solana: {}\n\nAfter paying, please call this tool again with run_id, txn_hash, and chain.",
+                            rid, amount, w_base, w_sol
+                        );
+                        return Ok(CallToolResult::text_content(vec![instructions.into()]));
+                    }
+                }
+
                 let provider = args.provider.unwrap_or_else(|| "gemini".into());
                 let ctx = scanner::scan_local(&args.path).map_err(cte)?;
-                let manifest = inferrer::infer_capabilities(&ctx, &provider, None)
+                let manifest = inferrer::infer_capabilities(&ctx, &provider, args.api_key.as_deref())
                     .await
                     .map_err(cte)?;
 
@@ -78,6 +112,28 @@ impl ServerHandler for BeaconMcpHandler {
                 let args: ValidateTool = serde_json::from_value(serde_json::Value::Object(params.arguments.unwrap_or_default()))
                     .map_err(cte)?;
                 
+                let is_cloud = args.api_key.is_none();
+
+                if is_cloud {
+                    if let (Some(rid), Some(txn), Some(ch)) = (args.run_id, args.txn_hash, args.chain) {
+                        let amount = std::env::var("PAYMENT_AMOUNT_USDC").unwrap_or_else(|_| "0.09".to_string()).parse::<f64>().unwrap_or(0.09);
+                        let wallet = if ch == "base" { std::env::var("BEACON_WALLET_BASE").unwrap_or_default() } else { std::env::var("BEACON_WALLET_SOLANA").unwrap_or_default() };
+                        let verified = verifier::verify_payment(&ch, &txn, amount, &wallet).await.map_err(cte)?;
+                        if !verified { return Ok(CallToolResult::text_content(vec!["Payment verification failed.".into()])); }
+                        db::mark_run_paid(&rid, &txn, &ch).await.ok();
+                    } else {
+                        let rid = db::create_run("validate-only").await.map_err(cte)?;
+                        let amount = std::env::var("PAYMENT_AMOUNT_USDC").unwrap_or_else(|_| "0.09".to_string());
+                        let w_base = std::env::var("BEACON_WALLET_BASE").unwrap_or_default();
+                        let w_sol = std::env::var("BEACON_WALLET_SOLANA").unwrap_or_default();
+                        let instructions = format!(
+                            "💰 Beacon Cloud Validation Payment Required\n\nRun ID: {}\nAmount: {} USDC\n\nAddresses:\n- Base: {}\n- Solana: {}\n\nAfter paying, call this tool again with run_id, txn_hash, and chain.",
+                            rid, amount, w_base, w_sol
+                        );
+                        return Ok(CallToolResult::text_content(vec![instructions.into()]));
+                    }
+                }
+
                 let result = validator::validate_content(&args.content)
                     .map_err(cte)?;
 
