@@ -4,7 +4,7 @@ use crate::models::{ValidationResult, EndpointCheckResult};
 use crate::errors::BeaconError;
 use serde_json::{json, Value};
 
-const BEACON_CLOUD_URL: &str = "https://api.beaconcloud.com";
+const BEACON_CLOUD_URL: &str = "https://api.beaconcloud.org";
 
 pub async fn validate_cloud(content: &str) -> Result<ValidationResult> {
     let client = Client::new();
