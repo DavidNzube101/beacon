@@ -190,7 +190,7 @@ async fn call_deepseek(prompt: &str, api_key: &str) -> Result<AgentsManifest> {
 
 
 
-const BEACON_CLOUD_URL: &str = "https://beacon-latest.onrender.com";
+const BEACON_CLOUD_URL: &str = "https://api.beaconcloud.com";
 
 async fn call_beacon_cloud(ctx: &RepoContext, _prompt: &str) -> Result<AgentsManifest> {
     let beacon_url = std::env::var("BEACON_CLOUD_URL")
