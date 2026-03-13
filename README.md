@@ -87,7 +87,7 @@ Beacon implements the Model Context Protocol. Any agent that speaks MCP can disc
 {
   "mcpServers": {
     "beacon": {
-      "url": "https://api.beaconcloud.org/sse"
+      "url": "http://localhost:8080/sse"
     }
   }
 }
